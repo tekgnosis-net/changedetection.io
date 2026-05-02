@@ -81,7 +81,9 @@ jobs:
   publish-to-pypi:
     name: >-
       Publish Python 🐍 distribution 📦 to PyPI
-    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
+    # Tag-push only AND only on the upstream repository — forks must not attempt to
+    # publish to the canonical `changedetection.io` PyPI package they don't own.
+    if: startsWith(github.ref, 'refs/tags/') && github.repository == 'dgtlmoon/changedetection.io'
     needs:
     - test-pypi-package
     runs-on: ubuntu-latest

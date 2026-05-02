@@ -35,6 +35,9 @@ jobs:
 
   build-push-containers:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     # If the testing workflow has a success, then we build to :latest
     # Or if we are in a tagged release scenario.
     if: ${{ github.event.workflow_run.conclusion == 'success' }} || ${{ github.event.release.tag_name }} != ''
@@ -78,12 +81,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to Docker Hub Container Registry
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v4
@@ -99,7 +96,6 @@ jobs:
         id: meta_dev
         with:
           images: |
-            ${{ secrets.DOCKER_HUB_USERNAME }}/changedetection.io
             ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=dev
@@ -108,7 +104,7 @@ jobs:
             org.opencontainers.image.description=Website, webpage change detection, monitoring and notifications.
             org.opencontainers.image.documentation=https://changedetection.io
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.source=https://github.com/dgtlmoon/changedetection.io
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.title=changedetection.io
             org.opencontainers.image.url=https://changedetection.io
 
@@ -143,8 +139,7 @@ jobs:
         id: meta
         with:
             images: |
-                ${{ secrets.DOCKER_HUB_USERNAME }}/changedetection.io
-                ghcr.io/dgtlmoon/changedetection.io
+                ghcr.io/${{ github.repository }}
             tags: |
                 type=semver,pattern={{version}},value=${{ github.event.release.tag_name }}
                 type=semver,pattern={{major}}.{{minor}},value=${{ github.event.release.tag_name }}
@@ -155,7 +150,7 @@ jobs:
               org.opencontainers.image.description=Website, webpage change detection, monitoring and notifications.
               org.opencontainers.image.documentation=https://changedetection.io
               org.opencontainers.image.revision=${{ github.sha }}
-              org.opencontainers.image.source=https://github.com/dgtlmoon/changedetection.io
+              org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
               org.opencontainers.image.title=changedetection.io
               org.opencontainers.image.url=https://changedetection.io
               org.opencontainers.image.version=${{ github.event.release.tag_name }}
