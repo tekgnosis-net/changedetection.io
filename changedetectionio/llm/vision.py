@@ -218,3 +218,25 @@ def load_and_prepare_screenshot(watch, llm_cfg: dict) -> tuple[bytes, str] | Non
             pass
 
     return bytes_out, mime
+
+
+def build_vision_messages(text_user_content: str,
+                          image_bytes: bytes,
+                          mime_type: str = 'image/jpeg',
+                          system_prompt: str | None = None,
+                          previous_screenshot: tuple[bytes, str] | None = None) -> list:
+    """Construct OpenAI-format multipart messages list.
+    `previous_screenshot` is reserved for a follow-up PR; currently ignored."""
+    messages = []
+    if system_prompt:
+        messages.append({'role': 'system', 'content': system_prompt})
+    messages.append({
+        'role': 'user',
+        'content': [
+            {'type': 'text', 'text': text_user_content},
+            {'type': 'image_url', 'image_url': {
+                'url': encode_as_data_url(image_bytes, mime_type),
+            }},
+        ],
+    })
+    return messages

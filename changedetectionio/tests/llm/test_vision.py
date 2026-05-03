@@ -260,3 +260,41 @@ def test_load_and_prepare_persists_hint_on_success(tmp_path):
     assert mime == 'image/jpeg'
     assert watch['llm_vision_preprocess_hint'] is not None
     assert watch['llm_vision_preprocess_hint']['model'] == 'openai/qwen3-vl-32b'
+
+
+def test_build_vision_messages_with_system_prompt():
+    """Multipart messages: system + user-with-image."""
+    msgs = vision.build_vision_messages(
+        text_user_content="What's the price?",
+        image_bytes=b'\xff\xd8\xff\xe0FAKE',
+        mime_type='image/jpeg',
+        system_prompt='You are a price extractor.',
+    )
+    assert len(msgs) == 2
+    assert msgs[0] == {'role': 'system', 'content': 'You are a price extractor.'}
+    assert msgs[1]['role'] == 'user'
+    assert isinstance(msgs[1]['content'], list)
+    assert len(msgs[1]['content']) == 2
+    assert msgs[1]['content'][0] == {'type': 'text', 'text': "What's the price?"}
+    assert msgs[1]['content'][1]['type'] == 'image_url'
+    assert msgs[1]['content'][1]['image_url']['url'].startswith(
+        'data:image/jpeg;base64,'
+    )
+
+
+def test_build_vision_messages_no_system_prompt():
+    msgs = vision.build_vision_messages(
+        text_user_content="hi", image_bytes=b'\xff\xd8FAKE',
+    )
+    assert len(msgs) == 1
+    assert msgs[0]['role'] == 'user'
+
+
+def test_build_vision_messages_previous_screenshot_unused_in_phase1():
+    """previous_screenshot kwarg reserved; currently ignored."""
+    msgs = vision.build_vision_messages(
+        text_user_content="Compare", image_bytes=b'CURR',
+        previous_screenshot=(b'PREV', 'image/jpeg'),
+    )
+    image_parts = [p for p in msgs[0]['content'] if p['type'] == 'image_url']
+    assert len(image_parts) == 1
