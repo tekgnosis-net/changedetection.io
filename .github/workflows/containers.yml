@@ -15,6 +15,7 @@ on:
   push:
     branches:
       - master
+      - llm-vision-support
 
 jobs:
   metadata:
@@ -124,6 +125,41 @@ jobs:
 
 # Looks like this was disabled
 #          provenance: false
+
+      # llm-vision-support feature branch -> :llm-vision-support container tag
+      # Doesn't clobber :dev (master) or :latest (release). Remove this block
+      # once the branch merges to master and :dev covers the same content.
+      - name: Docker meta :llm-vision-support
+        if: ${{ github.ref == 'refs/heads/llm-vision-support' && github.event_name != 'release' }}
+        uses: docker/metadata-action@v6
+        id: meta_vision
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=llm-vision-support
+          labels: |
+            org.opencontainers.image.created=${{ github.event.release.published_at }}
+            org.opencontainers.image.description=Website, webpage change detection, monitoring and notifications.
+            org.opencontainers.image.documentation=https://changedetection.io
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.title=changedetection.io
+            org.opencontainers.image.url=https://changedetection.io
+
+      - name: Build and push :llm-vision-support
+        id: docker_build_vision
+        if: ${{ github.ref == 'refs/heads/llm-vision-support' && github.event_name != 'release' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta_vision.outputs.tags }}
+          labels: ${{ steps.meta_vision.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       # A new tagged release is required, which builds :tag and :latest
       - name: Debug release info
