@@ -481,12 +481,18 @@ class perform_site_check(difference_detection_processor):
             multiple_prices_found = True
             itemprop_availability = {}
 
-        # If built-in extraction didn't get both price AND availability, try plugin override
-        # Only check plugin if this watch is using a fetcher that might provide better data
+        # If built-in extraction didn't get both price AND availability, try plugin override.
+        # Also force the plugin path when the watch has explicitly opted into LLM-driven
+        # extraction (llm_use_for_restock=True) — at that point the user has indicated
+        # they trust the LLM as primary, not just as fallback. Pages with ambiguous
+        # pricing (two <meta itemprop="price"> tags for original+sale, or competing
+        # prices in microdata vs. visible HTML) need the LLM with vision context to
+        # disambiguate; the built-in extractor's "first match wins" can be wrong.
         has_price = itemprop_availability.get('price') is not None
         has_availability = itemprop_availability.get('availability') is not None
+        force_llm = watch.get('llm_use_for_restock') is True
 
-        if not (has_price and has_availability):
+        if force_llm or not (has_price and has_availability):
             from changedetectionio.pluggy_interface import get_itemprop_availability_from_plugin
             fetcher_name = watch.get('fetch_backend', 'html_requests')
 
@@ -526,8 +532,21 @@ class perform_site_check(difference_detection_processor):
                     plugin_has_price = plugin_availability.get('price') is not None
                     plugin_has_availability = plugin_availability.get('availability') is not None
 
-                    # Only use plugin data if it's actually better than what we have
-                    if plugin_has_price or plugin_has_availability:
+                    # When the watch forced the LLM path (llm_use_for_restock=True), prefer
+                    # the LLM's output even if built-in had something — that's the whole
+                    # point of opting in. Without force_llm (None=inherit global, or
+                    # False=disabled), fall back to the legacy "only if it's actually better"
+                    # rule, which avoids regressing watches where built-in works fine and the
+                    # LLM only ran because built-in came up empty.
+                    if force_llm and (plugin_has_price or plugin_has_availability):
+                        itemprop_availability = plugin_availability
+                        logger.info(
+                            f"LLM-driven extraction (llm_use_for_restock=True) for watch "
+                            f"{watch.get('uuid')!s}: replacing built-in data "
+                            f"(built-in had price={has_price}, availability={has_availability}; "
+                            f"LLM returned price={plugin_has_price}, availability={plugin_has_availability})"
+                        )
+                    elif plugin_has_price or plugin_has_availability:
                         itemprop_availability = plugin_availability
                         logger.info(f"Using plugin-provided availability data for fetcher '{fetcher_name}' (built-in had price={has_price}, availability={has_availability}; plugin has price={plugin_has_price}, availability={plugin_has_availability})")
                 if not plugin_availability:

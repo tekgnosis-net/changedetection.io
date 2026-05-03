@@ -200,3 +200,45 @@ def test_restock_no_vision_cues_in_text_only(client, live_server):
 
     sys_msg = captured['messages'][0]['content']
     assert 'VISUAL CUES' not in sys_msg, "text-only branch must NOT include VISION_CUES_PROMPT"
+
+
+def test_restock_llm_use_for_restock_true_invokes_llm_with_extras_and_vision_cues(client, live_server):
+    """Integration shape test: when llm_use_for_restock=True + vision on +
+    extras filled, the LLM call sends multipart messages with the vision
+    cues paragraph AND the extras directive in the system prompt — the
+    full configured stack as the user would set it up."""
+    ds = client.application.config['DATASTORE']
+    _, watch = _setup_watch_for_restock(ds, with_screenshot=True)
+    watch['llm_use_for_restock'] = True
+    watch['llm_use_vision'] = True
+    watch['llm_vision_verified'] = True
+    watch['llm_extract_extras'] = 'Detect SALE banner and original price if struck through.'
+
+    captured = {}
+    def fake(model, messages, **kw):
+        captured['messages'] = messages
+        return ('{"price": 129.0, "currency": "AUD", "availability": "instock", '
+                '"sale_active": true, "original_price": 289.99, "sale_label": "SALE"}',
+                100, 50, 50)
+
+    with patch('changedetectionio.llm.client.completion', side_effect=fake):
+        from changedetectionio.processors.restock_diff.plugins import llm_restock
+        result = llm_restock.run_llm_restock_extraction(watch, 'page text with multiple prices')
+
+    # Multipart user message (vision branch took)
+    user_msg = next(m for m in captured['messages'] if m['role'] == 'user')
+    assert isinstance(user_msg['content'], list)
+    assert any(p.get('type') == 'image_url' for p in user_msg['content'])
+
+    # System prompt has both VISION_CUES and the user's extras directive
+    sys_msg = captured['messages'][0]['content']
+    assert 'VISUAL CUES' in sys_msg
+    assert 'Detect SALE banner' in sys_msg
+
+    # Result has the right price and the extras persisted
+    assert result.get('price') == 129.0
+    assert watch.get('llm_extracted_extras') == {
+        'sale_active': True,
+        'original_price': 289.99,
+        'sale_label': 'SALE',
+    }
