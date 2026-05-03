@@ -300,6 +300,21 @@ def test_build_vision_messages_previous_screenshot_unused_in_phase1():
     assert len(image_parts) == 1
 
 
+def test_probe_image_bytes_is_a_valid_png():
+    """PROBE_IMAGE_BYTES must decode cleanly through Pillow.
+
+    Regression: a hand-crafted variant once shipped with a corrupt IDAT chunk —
+    Pillow accepted the header but raised "broken data stream" on .load(),
+    and vLLM's image loader (which uses Pillow) returned the same error,
+    breaking the live capability probe. Decoding here catches that BEFORE
+    the bytes ever reach a real LLM endpoint.
+    """
+    img = Image.open(io.BytesIO(vision.PROBE_IMAGE_BYTES))
+    img.load()  # forces full IDAT decode — header-only validation isn't enough
+    assert img.size == (16, 16)
+    assert img.mode in ('RGB', 'RGBA', 'P', 'L')
+
+
 def test_probe_vision_capability_success():
     """litellm returns text → (True, message)."""
     fake_response = MagicMock()

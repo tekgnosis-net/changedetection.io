@@ -25,12 +25,15 @@ VISION_IMAGE_MAX_HEIGHT = int(os.getenv('VISION_IMAGE_MAX_HEIGHT', 4096))
 VISION_IMAGE_MAX_KB     = int(os.getenv('VISION_IMAGE_MAX_KB',      800))
 VISION_JPEG_QUALITY     = int(os.getenv('VISION_JPEG_QUALITY',       85))
 
-# Embedded 16x16 PNG used for the capability probe. ~70 bytes after b64.
-# This is a deterministic minimal valid PNG (16x16 single-color image).
+# Embedded 16x16 PNG used for the capability probe. 83 bytes raw.
+# Regenerated via Pillow (Image.new('RGB', (16, 16), (180,180,180)).save(...)),
+# so it round-trips through any Pillow-based decoder — including vLLM's image
+# loader, which previously rejected a hand-crafted variant of these bytes with
+# "broken data stream when reading image file".
 PROBE_IMAGE_BYTES: bytes = bytes.fromhex(
-    '89504e470d0a1a0a0000000d49484452000000100000001008060000001ff3ff'
-    '610000001b49444154789c63fcffff3f0339c0c4c00800000d000100c14a0001'
-    '00000049454e44ae426082'
+    '89504e470d0a1a0a0000000d4948445200000010000000100802000000909168'
+    '360000001a4944415478da63dcb2650b03298089814430aa6154c3d0d10000a5'
+    'f2023ce40b75bb0000000049454e44ae426082'
 )
 
 
