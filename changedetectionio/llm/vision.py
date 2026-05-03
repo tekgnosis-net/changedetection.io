@@ -14,6 +14,8 @@ Image preprocessing rationale:
 import base64
 import os
 
+from loguru import logger
+
 # Preprocessing defaults — env-overridable for power users.
 # Tuned for common local vision models. Override via env vars if your served
 # model wants different inputs (e.g. high-detail Qwen3-VL: 1920; LLaVA: 672).
@@ -41,3 +43,17 @@ def encode_as_data_url(image_bytes: bytes, mime_type: str) -> str:
     """Wrap raw image bytes in OpenAI multipart-format data URL.
     Returns 'data:<mime>;base64,<b64-encoded-bytes>'."""
     return f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+
+
+def load_screenshot(watch) -> bytes | None:
+    """Read <watch.data_dir>/last-screenshot.png. Returns the raw bytes
+    or None if the file doesn't exist (e.g. watch never fetched yet, or
+    using html_requests fetcher which doesn't render images)."""
+    if not getattr(watch, 'data_dir', None):
+        return None
+    path = os.path.join(watch.data_dir, 'last-screenshot.png')
+    if not os.path.isfile(path):
+        logger.info(f"vision.load_screenshot: no screenshot at {path}")
+        return None
+    with open(path, 'rb') as f:
+        return f.read()
