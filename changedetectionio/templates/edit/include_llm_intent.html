@@ -198,6 +198,8 @@
 
 <script>
 (function () {
+  // Assumes a single vision toggle/button pair per page — only one of the
+  // _is_text_json_diff / _is_restock_diff branches renders at a time.
   const toggle = document.querySelector('[name="llm_use_vision"]');
   const verified = document.querySelector('[name="llm_vision_verified"]');
   const result = document.getElementById('llm-vision-test-result');
@@ -249,7 +251,7 @@
         if (verified) verified.value = '';
       }
     } catch (e) {
-      renderResult(false, null, '{{ _("Request failed") }}: ' + e.message);
+      renderResult(false, null, '{{ _("Request failed") }}: ' + (e?.message || ''));
       if (verified) verified.value = '';
     } finally {
       btn.disabled = false;
