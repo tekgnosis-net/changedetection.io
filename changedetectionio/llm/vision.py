@@ -259,7 +259,13 @@ def probe_vision_capability(model: str,
     try:
         kwargs = {
             'model': model, 'messages': messages, 'timeout': timeout,
-            'temperature': 0, 'max_tokens': 100,
+            'temperature': 0,
+            # Sized for reasoning models (Qwen3-VL, DeepSeek-VL2, Gemma 3 thinking)
+            # which emit chain-of-thought into message.reasoning_content before the
+            # answer lands in message.content — a small cap truncates mid-thought
+            # and yields finish_reason='length' with empty content. Same value the
+            # text-only /settings/llm/test route uses (blueprint/settings/llm.py).
+            'max_tokens': 4000,
         }
         if api_key:
             kwargs['api_key'] = api_key
@@ -270,6 +276,14 @@ def probe_vision_capability(model: str,
         text = (choice.message.content or '').strip()
         finish = getattr(choice, 'finish_reason', None)
         if not text:
+            if finish == 'length':
+                return False, (
+                    "Model exhausted the 4000-token budget before producing a "
+                    "response (finish_reason=length). Reasoning models burn the "
+                    "budget on chain-of-thought; if you're sure the model is "
+                    "vision-capable, raise max_tokens or pick a non-reasoning "
+                    "vision model."
+                )
             return False, (
                 f"Model responded but returned empty content "
                 f"(finish_reason={finish}). The configured model may not "

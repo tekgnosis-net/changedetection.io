@@ -343,8 +343,10 @@ def test_probe_vision_capability_endpoint_rejects():
     assert 'image' in msg.lower() or 'support' in msg.lower()
 
 
-def test_probe_vision_capability_empty_content():
-    """200 response but empty content → (False, helpful message)."""
+def test_probe_vision_capability_empty_content_length():
+    """finish_reason='length' with empty content → diagnostic mentions token
+    budget exhaustion (not 'may not support images', which is misleading when
+    reasoning models burn through small caps before producing any content)."""
     fake_response = MagicMock()
     fake_response.choices = [MagicMock()]
     fake_response.choices[0].message.content = ''
@@ -356,7 +358,29 @@ def test_probe_vision_capability_empty_content():
             api_base='http://10.0.20.64:8011/v1',
         )
     assert ok is False
-    assert 'empty' in msg.lower() or 'finish_reason' in msg.lower()
+    msg_lower = msg.lower()
+    assert 'budget' in msg_lower or 'max_tokens' in msg_lower or 'exhaust' in msg_lower, \
+        f"Length-finish diagnostic should mention token budget, got: {msg!r}"
+    assert 'finish_reason=length' in msg
+
+
+def test_probe_vision_capability_empty_content_stop():
+    """finish_reason='stop' with empty content → diagnostic suggests the model
+    may not support image inputs (legitimate inference: model stopped naturally
+    without producing text, most likely because it can't process the image)."""
+    fake_response = MagicMock()
+    fake_response.choices = [MagicMock()]
+    fake_response.choices[0].message.content = ''
+    fake_response.choices[0].finish_reason = 'stop'
+
+    with patch('litellm.completion', return_value=fake_response):
+        ok, msg = vision.probe_vision_capability(
+            model='openai/some-text-only-model', api_key='sk',
+            api_base='http://10.0.20.64:8011/v1',
+        )
+    assert ok is False
+    assert 'image' in msg.lower() or 'support' in msg.lower()
+    assert 'finish_reason=stop' in msg
 
 
 def test_record_vision_failure_clears_after_three():
