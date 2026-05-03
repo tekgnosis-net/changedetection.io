@@ -242,3 +242,30 @@ def test_restock_llm_use_for_restock_true_invokes_llm_with_extras_and_vision_cue
         'original_price': 289.99,
         'sale_label': 'SALE',
     }
+
+
+def test_restock_max_tokens_sized_for_reasoning_models(client, live_server):
+    """Regression: reasoning models burn output budget on chain-of-thought.
+    The base must be large enough that text_len=0 / finish_reason='length'
+    isn't the failure mode for normal sale-page extractions."""
+    ds = client.application.config['DATASTORE']
+    _, watch = _setup_watch_for_restock(ds)
+    watch['llm_use_for_restock'] = True
+    watch['llm_use_vision'] = False
+
+    captured_kwargs = {}
+    def fake(model, messages, **kw):
+        captured_kwargs.update(kw)
+        return ('{"price": 129.0, "currency": "AUD", "availability": "instock"}',
+                50, 25, 25)
+
+    with patch('changedetectionio.llm.client.completion', side_effect=fake):
+        from changedetectionio.processors.restock_diff.plugins import llm_restock
+        llm_restock.run_llm_restock_extraction(watch, 'page text')
+
+    # Without provider_kind=openai_compatible the multiplier is 1x → max_tokens=800.
+    # With provider_kind=openai_compatible the multiplier is 5x → max_tokens=4000.
+    # The configured llm has provider_kind=openai_compatible (set in the helper),
+    # so this should be the multiplied value.
+    assert captured_kwargs.get('max_tokens') == 4000, \
+        f"Expected max_tokens=4000 (800 * 5x for openai_compatible), got {captured_kwargs.get('max_tokens')}"

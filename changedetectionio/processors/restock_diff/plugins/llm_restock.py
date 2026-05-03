@@ -314,7 +314,14 @@ def run_llm_restock_extraction(watch, text_content, llm_intent=None):
         raw, tokens, input_tokens, output_tokens = llm_client.completion(
             model=llm_cfg['model'], messages=messages,
             api_key=llm_cfg.get('api_key'), api_base=llm_cfg.get('api_base'),
-            max_tokens=apply_local_token_multiplier(80, llm_cfg),
+            # Reasoning-capable local models (Qwen3-VL, DeepSeek-VL2, Gemma 3
+            # thinking) burn hundreds of tokens on chain-of-thought BEFORE
+            # emitting the answer JSON. With per-watch extras + vision cues,
+            # the JSON itself can be 150-300 chars. 800 base → 4000 after the
+            # local-provider 5x multiplier — matches the /settings/llm/test
+            # and /settings/llm/vision-test probe budgets, which had the same
+            # finish_reason='length' / text_len=0 issue at lower limits.
+            max_tokens=apply_local_token_multiplier(800, llm_cfg),
         )
         _bookkeep_tokens(tokens, input_tokens, output_tokens)
         if _vision_was_used:
@@ -331,7 +338,14 @@ def run_llm_restock_extraction(watch, text_content, llm_intent=None):
                 raw, tokens, input_tokens, output_tokens = llm_client.completion(
                     model=llm_cfg['model'], messages=text_messages,
                     api_key=llm_cfg.get('api_key'), api_base=llm_cfg.get('api_base'),
-                    max_tokens=apply_local_token_multiplier(80, llm_cfg),
+                    # Reasoning-capable local models (Qwen3-VL, DeepSeek-VL2, Gemma 3
+                    # thinking) burn hundreds of tokens on chain-of-thought BEFORE
+                    # emitting the answer JSON. With per-watch extras + vision cues,
+                    # the JSON itself can be 150-300 chars. 800 base → 4000 after the
+                    # local-provider 5x multiplier — matches the /settings/llm/test
+                    # and /settings/llm/vision-test probe budgets, which had the same
+                    # finish_reason='length' / text_len=0 issue at lower limits.
+                    max_tokens=apply_local_token_multiplier(800, llm_cfg),
                 )
                 _bookkeep_tokens(tokens, input_tokens, output_tokens)
             except Exception as e2:
@@ -450,10 +464,14 @@ def get_itemprop_availability_override(content, fetcher_name, fetcher_instance, 
             ],
             api_key=llm_cfg.get('api_key'),
             api_base=llm_cfg.get('api_base'),
-            # 80 fits a {price, currency, availability} JSON answer comfortably for cloud
-            # models. Local reasoning models burn most of that on chain-of-thought before
-            # the JSON lands — the multiplier scales it up only when provider_kind says so.
-            max_tokens=apply_local_token_multiplier(80, llm_cfg),
+            # Reasoning-capable local models (Qwen3-VL, DeepSeek-VL2, Gemma 3
+            # thinking) burn hundreds of tokens on chain-of-thought BEFORE
+            # emitting the answer JSON. With per-watch extras + vision cues,
+            # the JSON itself can be 150-300 chars. 800 base → 4000 after the
+            # local-provider 5x multiplier — matches the /settings/llm/test
+            # and /settings/llm/vision-test probe budgets, which had the same
+            # finish_reason='length' / text_len=0 issue at lower limits.
+            max_tokens=apply_local_token_multiplier(800, llm_cfg),
         )
 
         accumulate_global_tokens(
