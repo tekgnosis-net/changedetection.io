@@ -209,3 +209,54 @@ def test_preprocess_with_changed_api_base_discards_hint():
     )
     assert used_hint['api_base'] == current_context['api_base']
     assert used_hint['quality'] == vision.VISION_JPEG_QUALITY  # ladder ran fresh
+
+
+def test_load_and_prepare_returns_none_when_no_screenshot(tmp_path):
+    """No screenshot on disk → returns None (caller falls back to text)."""
+    watch = MagicMock()
+    watch.data_dir = str(tmp_path)
+    watch.get = MagicMock(return_value=None)
+    llm_cfg = {
+        'model': 'openai/qwen3-vl', 'api_base': 'http://x',
+        'provider_kind': 'openai_compatible',
+    }
+    result = vision.load_and_prepare_screenshot(watch, llm_cfg)
+    assert result is None
+
+
+def test_load_and_prepare_returns_none_for_corrupt_image(tmp_path):
+    """Non-image bytes (e.g. html_requests response body) → returns None."""
+    (tmp_path / 'last-screenshot.png').write_bytes(b'<html>not an image</html>')
+    watch = MagicMock()
+    watch.data_dir = str(tmp_path)
+    watch.get = MagicMock(return_value=None)
+    llm_cfg = {'model': 'm', 'api_base': 'b', 'provider_kind': 'openai_compatible'}
+    result = vision.load_and_prepare_screenshot(watch, llm_cfg)
+    assert result is None
+
+
+def test_load_and_prepare_persists_hint_on_success(tmp_path):
+    """Successful preprocess updates watch['llm_vision_preprocess_hint']."""
+    src = _make_png(1280, 720)
+    (tmp_path / 'last-screenshot.png').write_bytes(src)
+
+    class FakeWatch(dict):
+        def __init__(self, data, dir):
+            super().__init__(data)
+            self.data_dir = dir
+
+    watch = FakeWatch({
+        'llm_vision_preprocess_hint': None,
+        'fetch_backend': 'html_playwright',
+    }, str(tmp_path))
+    llm_cfg = {
+        'model': 'openai/qwen3-vl-32b',
+        'api_base': 'http://10.0.20.64:8011/v1',
+        'provider_kind': 'openai_compatible',
+    }
+    result = vision.load_and_prepare_screenshot(watch, llm_cfg)
+    assert result is not None
+    bytes_out, mime = result
+    assert mime == 'image/jpeg'
+    assert watch['llm_vision_preprocess_hint'] is not None
+    assert watch['llm_vision_preprocess_hint']['model'] == 'openai/qwen3-vl-32b'

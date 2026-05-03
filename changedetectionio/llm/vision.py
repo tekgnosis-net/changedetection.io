@@ -166,3 +166,55 @@ def preprocess_screenshot(image_bytes: bytes,
     raise VisionImageTooLargeError(
         f"Image still over {max_kb} KB after quality ladder + 3 dim retries"
     )
+
+
+def load_and_prepare_screenshot(watch, llm_cfg: dict) -> tuple[bytes, str] | None:
+    """Load <watch.data_dir>/last-screenshot.png, run preprocess with the
+    watch's stored hint and the current run's context.
+
+    Returns (processed_bytes, mime_type) or None on:
+      - missing screenshot file
+      - PIL decode failure (corrupt or non-image content)
+      - VisionImageTooLargeError after all reductions
+
+    On success, persists the new hint (with current context) onto the watch
+    via in-place dict mutation. The worker commits the watch at end-of-check
+    via the existing watch lifecycle.
+    """
+    raw = load_screenshot(watch)
+    if raw is None:
+        return None
+
+    context = {
+        'model':           llm_cfg.get('model'),
+        'fetcher_backend': watch.get('fetch_backend'),
+        'api_base':        llm_cfg.get('api_base'),
+        'provider_kind':   llm_cfg.get('provider_kind'),
+    }
+
+    try:
+        hint = watch.get('llm_vision_preprocess_hint')
+        bytes_out, mime, used_hint = preprocess_screenshot(
+            raw, hint=hint, context=context
+        )
+    except VisionImageTooLargeError as e:
+        logger.warning(
+            f"vision.load_and_prepare: image unrescuable for "
+            f"watch={getattr(watch, 'uuid', '?')}: {e}"
+        )
+        return None
+    except Exception as e:
+        # PIL decode failure — corrupt or non-image bytes
+        logger.warning(
+            f"vision.load_and_prepare: decode failure for "
+            f"watch={getattr(watch, 'uuid', '?')}: {type(e).__name__}: {e}"
+        )
+        return None
+
+    if used_hint != hint:
+        try:
+            watch['llm_vision_preprocess_hint'] = used_hint
+        except (TypeError, KeyError):
+            pass
+
+    return bytes_out, mime
