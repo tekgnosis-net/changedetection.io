@@ -315,6 +315,8 @@ def construct_blueprint(datastore: ChangeDetectionStore, update_q, queuedWatchMe
             if worker_pool.is_watch_running(uuid):
                 c.append('checking-now')
 
+            _llm_cfg = _get_llm_config(datastore)
+
             template_args = {
                 'available_processors': processors.available_processors(),
                 'available_timezones': sorted(available_timezones()),
@@ -349,7 +351,8 @@ def construct_blueprint(datastore: ChangeDetectionStore, update_q, queuedWatchMe
                     if tag_uuid not in watch.get('tags', []) and tag.matches_url(watch.get('url', ''))
                 },
                 # LLM intent context
-                'llm_configured': bool(_get_llm_config(datastore)),
+                'llm_config': _llm_cfg or {},
+                'llm_configured': bool(_llm_cfg),
                 'llm_group_overrides': _resolve_llm_group_overrides(watch, datastore),
             }
 

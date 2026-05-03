@@ -179,12 +179,14 @@ def construct_blueprint(datastore: ChangeDetectionStore):
                             sub_field.data = sub_value
                     break
 
+        _llm_cfg = _get_llm_config(datastore)
         template_args = {
             'data': default,
             'form': form,
             'watch': default,
             'extra_notification_token_placeholder_info': datastore.get_unique_notification_token_placeholders_available(),
-            'llm_configured': bool(_get_llm_config(datastore)),
+            'llm_config': _llm_cfg or {},
+            'llm_configured': bool(_llm_cfg),
         }
 
         included_content = {}

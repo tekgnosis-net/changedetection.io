@@ -3,6 +3,7 @@
 
   Required template context:
     llm_configured  — bool: LLM provider is configured in settings
+    llm_config      — dict: raw LLM config from _get_llm_config(); {} if not configured
     form            — the WTForms form (must have .llm_intent and .llm_change_summary fields)
 
   Optional (watch edit only):
@@ -105,6 +106,37 @@
         </ul>
     </div>
     {% endif %}
+
+    <hr style="margin: 1.2em 0; border: none; border-top: 1px solid var(--color-border, #ddd);">
+
+    {# Vision (text_json_diff) #}
+    <h4 style="margin: 0 0 0.3em 0;">{{ _('AI Vision (optional)') }}</h4>
+    <p class="pure-form-message-inline" style="margin-top:0">
+        {{ _('Send the latest page screenshot to the LLM alongside the text diff so the AI Change Summary can describe visual changes (icons, banners, layout shifts). Requires a self-hosted OpenAI-compatible endpoint with a vision-capable model and a browser-based fetcher.') }}
+    </p>
+
+    {% set _provider_kind = (llm_config.get('provider_kind') if llm_config else '') %}
+    {% set _is_local_compatible = _provider_kind == 'openai_compatible' %}
+    {% set _is_browser_fetcher = (watch.get('fetch_backend') if watch is defined and watch else '') in ('html_webdriver', 'html_playwright', 'html_puppeteer') %}
+
+    <div class="pure-control-group">
+        {% if not _is_local_compatible %}
+        <p class="pure-form-message-inline" style="opacity:0.7;">
+            {{ _('Vision is currently only enabled for the OpenAI-compatible (vLLM, LM Studio, llama.cpp) provider. Configure that in <a href="%(url)s">Settings → AI / LLM</a>.', url=url_for('settings.settings_page') + '#ai') | safe }}
+        </p>
+        {% elif not _is_browser_fetcher %}
+        <p class="pure-form-message-inline" style="opacity:0.7;">
+            {{ _('Vision needs a browser-based fetcher (Playwright / Puppeteer / WebDriver) to capture screenshots. Switch the fetcher in the <strong>Request</strong> tab to enable.') | safe }}
+        </p>
+        {% else %}
+        {{ render_field(form.llm_use_vision) }}
+        {{ form.llm_vision_verified() }}
+        <button type="button" id="llm-vision-test-btn" class="pure-button button-xsmall" onclick="llmVisionTest()">
+            &#9654; {{ _('Test vision capability') }}
+        </button>
+        <span id="llm-vision-test-result" style="margin-left:0.6em;font-size:.85em;"></span>
+        {% endif %}
+    </div>
     {% endif %}{# _is_text_json_diff #}
 </div>
 
