@@ -490,14 +490,14 @@ class TestSummariseChange:
             result = summarise_change(watch, ds, diff='+ Konzert am Freitag')
         assert result == 'New concert added on Friday'
 
-    def test_llm_failure_raises(self):
-        """On LLM error, summarise_change re-raises so callers can surface the error."""
+    def test_llm_failure_returns_empty(self):
+        """On LLM error, summarise_change returns '' (docstring contract)."""
         from changedetectionio.llm.evaluator import summarise_change
         ds = _make_datastore(llm_cfg={'model': 'gpt-4o-mini'})
         watch = _make_watch(llm_change_summary='Describe the change')
         with patch('changedetectionio.llm.client.completion', side_effect=Exception('timeout')):
-            with pytest.raises(Exception, match='timeout'):
-                summarise_change(watch, ds, diff='- old\n+ new')
+            result = summarise_change(watch, ds, diff='- old\n+ new')
+        assert result == ''
 
     def test_uses_higher_token_limit_than_eval(self):
         """summarise_change passes a dynamic max_tokens larger than the eval default (200)."""

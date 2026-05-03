@@ -454,24 +454,42 @@ def summarise_change(watch, datastore, diff: str, current_snapshot: str = '') ->
     _thinking_budget = int(datastore.data['settings']['application'].get('llm_thinking_budget', LLM_DEFAULT_THINKING_BUDGET) or 0)
     _extra_body = _thinking_extra_body(cfg['model'], _thinking_budget)
 
-    try:
-        _resp = llm_client.completion(
-            model=cfg['model'],
-            messages=[
-                _cached_system(system_prompt, model=cfg['model']),
-                {'role': 'user', 'content': user_prompt},
-            ],
-            api_key=cfg.get('api_key'),
-            api_base=cfg.get('api_base'),
-            max_tokens=apply_local_token_multiplier(
-                _summary_max_tokens(
-                    diff,
-                    max_cap=int(datastore.data['settings']['application'].get('llm_max_summary_tokens', LLM_DEFAULT_MAX_SUMMARY_TOKENS) or LLM_DEFAULT_MAX_SUMMARY_TOKENS),
-                ),
-                cfg,
-            ),
-            extra_body=_extra_body,
-        )
+    # ── Decide whether to use the vision branch ──────────────────────────
+    use_vision = (
+        watch.get('llm_use_vision')
+        and watch.get('llm_vision_verified')
+        and cfg.get('provider_kind') == 'openai_compatible'
+        and watch.get('fetch_backend') in ('html_webdriver', 'html_playwright', 'html_puppeteer')
+    )
+
+    messages = None
+    if use_vision:
+        from changedetectionio.llm import vision as _vision
+        loaded = _vision.load_and_prepare_screenshot(watch, cfg)
+        if loaded is not None:
+            image_bytes, mime = loaded
+            messages = _vision.build_vision_messages(
+                text_user_content=user_prompt,
+                image_bytes=image_bytes,
+                mime_type=mime,
+                system_prompt=system_prompt,
+            )
+
+    if messages is None:
+        messages = [
+            _cached_system(system_prompt, model=cfg['model']),
+            {'role': 'user', 'content': user_prompt},
+        ]
+
+    _max_tokens_call = apply_local_token_multiplier(
+        _summary_max_tokens(
+            diff,
+            max_cap=int(datastore.data['settings']['application'].get('llm_max_summary_tokens', LLM_DEFAULT_MAX_SUMMARY_TOKENS) or LLM_DEFAULT_MAX_SUMMARY_TOKENS),
+        ),
+        cfg,
+    )
+
+    def _bookkeep_and_return(_resp) -> str:
         raw, tokens = _resp[0], _resp[1]
         input_tokens  = _resp[2] if len(_resp) > 2 else 0
         output_tokens = _resp[3] if len(_resp) > 3 else 0
@@ -488,8 +506,47 @@ def summarise_change(watch, datastore, diff: str, current_snapshot: str = '') ->
             f"summary={summary[:80]}"
         )
         return summary
+
+    _vision_was_used = any(isinstance(m.get('content'), list) for m in messages)
+
+    try:
+        _resp = llm_client.completion(
+            model=cfg['model'],
+            messages=messages,
+            api_key=cfg.get('api_key'),
+            api_base=cfg.get('api_base'),
+            max_tokens=_max_tokens_call,
+            extra_body=_extra_body,
+        )
     except Exception as e:
-        raise
+        logger.warning(f"summarise_change: completion failed: {e}")
+        if _vision_was_used:
+            from changedetectionio.llm import vision as _vis
+            _vis.record_vision_failure(watch)
+            text_messages = [
+                _cached_system(system_prompt, model=cfg['model']),
+                {'role': 'user', 'content': user_prompt},
+            ]
+            try:
+                _resp = llm_client.completion(
+                    model=cfg['model'],
+                    messages=text_messages,
+                    api_key=cfg.get('api_key'),
+                    api_base=cfg.get('api_base'),
+                    max_tokens=_max_tokens_call,
+                    extra_body=_extra_body,
+                )
+            except Exception as e2:
+                logger.warning(f"summarise_change: text-only retry also failed: {e2}")
+                return ''
+            return _bookkeep_and_return(_resp)
+        return ''
+
+    summary = _bookkeep_and_return(_resp)
+    if _vision_was_used:
+        from changedetectionio.llm import vision as _vis
+        _vis.reset_vision_failure_count(watch)
+    return summary
 
 
 # ---------------------------------------------------------------------------
