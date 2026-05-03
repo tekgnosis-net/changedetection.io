@@ -196,4 +196,67 @@
 </div>
 {% endif %}
 
+<script>
+(function () {
+  const toggle = document.querySelector('[name="llm_use_vision"]');
+  const verified = document.querySelector('[name="llm_vision_verified"]');
+  const result = document.getElementById('llm-vision-test-result');
+
+  // Clear verified flag when user touches the toggle (forces re-probe).
+  if (toggle) {
+    toggle.addEventListener('change', function () {
+      if (verified) verified.value = '';
+      if (result) {
+        result.textContent = '';
+        result.style.color = '';
+      }
+    });
+  }
+
+  function renderResult(ok, text, error) {
+    if (!result) return;
+    while (result.firstChild) result.removeChild(result.firstChild);
+    if (ok) {
+      result.style.color = '#27ae60';
+      const checkmark = document.createElement('span');
+      checkmark.textContent = '✓ {{ _("Vision works") }}: ';
+      const em = document.createElement('em');
+      em.textContent = text || '';
+      result.appendChild(checkmark);
+      result.appendChild(em);
+    } else {
+      result.style.color = '#c0392b';
+      result.textContent = '✗ ' + (error || '{{ _("Failed") }}');
+    }
+  }
+
+  window.llmVisionTest = async function () {
+    const btn = document.getElementById('llm-vision-test-btn');
+    if (!btn || !result) return;
+    btn.disabled = true;
+    btn.textContent = '⏳ {{ _("Testing…") }}';
+    result.textContent = '';
+    result.style.color = '';
+
+    try {
+      const resp = await fetch('{{ url_for("settings.llm.llm_vision_test") }}');
+      const data = await resp.json();
+      if (data.ok) {
+        renderResult(true, data.text, null);
+        if (verified) verified.value = '1';
+      } else {
+        renderResult(false, null, data.error);
+        if (verified) verified.value = '';
+      }
+    } catch (e) {
+      renderResult(false, null, '{{ _("Request failed") }}: ' + e.message);
+      if (verified) verified.value = '';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '▶ {{ _("Test vision capability") }}';
+    }
+  };
+})();
+</script>
+
 {% endif %}{# _show_ai_section #}
