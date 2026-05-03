@@ -41,3 +41,33 @@ def test_vision_test_route_no_model(client, live_server):
     resp = client.get(url_for('settings.llm.llm_vision_test'))
     assert resp.status_code == 400
     assert 'No model configured' in resp.get_json()['error']
+
+
+def test_per_watch_form_persists_vision_fields(client, live_server):
+    """Saving a watch with vision toggle on stores it in the watch dict."""
+    ds = client.application.config['DATASTORE']
+    uuid = ds.add_watch(url='https://example.com')
+    resp = client.post(
+        url_for('ui.ui_edit.edit_page', uuid=uuid),
+        data={
+            'url': 'https://example.com',
+            'tags': '',
+            'time_between_check-hours': '1',
+            'time_between_check-minutes': '0',
+            'time_between_check-seconds': '0',
+            'time_between_check-weeks': '0',
+            'time_between_check-days': '0',
+            'fetch_backend': 'system',
+            'processor': 'text_json_diff',
+            'method': 'GET',
+            'extract_title_as_title': 'y',
+            'llm_use_vision': 'y',
+            'llm_vision_verified': '1',
+            'llm_use_for_restock': 'true',
+        },
+        follow_redirects=True,
+    )
+    assert resp.status_code in (200, 302)
+    watch = ds.data['watching'][uuid]
+    assert watch.get('llm_use_vision') is True
+    assert watch.get('llm_use_for_restock') is True

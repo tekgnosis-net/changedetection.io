@@ -805,6 +805,19 @@ class processor_text_json_diff_form(commonSettingsForm):
                                render_kw={"rows": "5", "placeholder": DEFAULT_CHANGE_SUMMARY_PROMPT},
                                default='')
 
+    llm_use_vision = BooleanField(
+        _l('Send the page screenshot to the LLM'),
+        default=False,
+    )
+    llm_vision_verified = HiddenField(
+        validators=[validators.Optional()],
+        default='',
+    )
+    llm_use_for_restock = TernaryNoneBooleanField(
+        _l('Use AI for price/stock extraction (when JSON-LD/microdata is missing)'),
+        default=None,
+    )
+
     include_filters = StringListField(_l('CSS/JSONPath/JQ/XPath Filters'), [ValidateCSSJSONXPATHInput()], default='')
 
     subtractive_selectors = StringListField(_l('Remove elements'), [ValidateCSSJSONXPATHInput(allow_json=False)])
