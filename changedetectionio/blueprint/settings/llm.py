@@ -105,6 +105,39 @@ def construct_llm_blueprint(datastore: ChangeDetectionStore):
             logger.exception("LLM connection test full traceback:")
             return jsonify({'ok': False, 'error': str(e)}), 400
 
+    @llm_blueprint.route("/vision-test", methods=['GET'])
+    @login_optionally_required
+    def llm_vision_test():
+        """Probe whether the configured local endpoint's served model
+        accepts image inputs. Used by the per-watch 'Test vision
+        capability' button to unlock the vision toggle."""
+        from changedetectionio.llm.vision import probe_vision_capability
+
+        llm_cfg = datastore.data['settings']['application'].get('llm') or {}
+        model = (llm_cfg.get('model') or '').strip()
+        api_key = llm_cfg.get('api_key') or None
+        api_base = llm_cfg.get('api_base') or None
+
+        logger.debug(
+            f"LLM vision capability probe requested: "
+            f"model={model!r} api_base={api_base!r}"
+        )
+        if not model:
+            return jsonify({'ok': False, 'error': 'No model configured.'}), 400
+
+        ok, msg = probe_vision_capability(
+            model=model, api_key=api_key, api_base=api_base, timeout=30
+        )
+        if ok:
+            logger.success(
+                f"LLM vision probe OK: model={model!r} reply={msg[:80]!r}"
+            )
+            return jsonify({'ok': True, 'text': msg})
+        logger.warning(
+            f"LLM vision probe FAILED: model={model!r} error={msg}"
+        )
+        return jsonify({'ok': False, 'error': msg}), 400
+
     @llm_blueprint.route("/clear", methods=['GET'])
     @login_optionally_required
     def llm_clear():
