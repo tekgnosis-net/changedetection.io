@@ -97,6 +97,39 @@ def preprocess_screenshot(image_bytes: bytes,
     if img.mode != 'RGB':
         img = img.convert('RGB')
 
+    # Fast-path: try the hinted params first if context matches
+    def _hint_context_matches(h, c):
+        if not h or not c:
+            return False
+        return all(h.get(k) == c.get(k) for k in _HINT_CONTEXT_KEYS)
+
+    if _hint_context_matches(hint, context):
+        try:
+            scaled = img
+            hw = hint['max_width']
+            hh = hint['max_height']
+            hq = hint['quality']
+            if scaled.width > hw:
+                new_height = int(scaled.height * (hw / scaled.width))
+                scaled = scaled.resize((hw, new_height), Image.LANCZOS)
+            if scaled.height > hh:
+                scaled = scaled.crop((0, 0, scaled.width, hh))
+            data = _try_encode(scaled, hq)
+            if len(data) <= max_kb * 1024:
+                logger.debug(
+                    f"vision.preprocess: hint fast-path hit "
+                    f"size={scaled.size} q={hq} bytes={len(data)}"
+                )
+                return data, 'image/jpeg', {
+                    'quality': hq, 'max_width': hw, 'max_height': hh,
+                    **{k: context[k] for k in _HINT_CONTEXT_KEYS},
+                }
+        except Exception as e:
+            logger.debug(
+                f"vision.preprocess: hint fast-path failed ({e}); "
+                f"falling back to ladder"
+            )
+
     cur_max_width = max_width
     quality_ladder = [quality, 75, 65, 55]
     cap_bytes = max_kb * 1024

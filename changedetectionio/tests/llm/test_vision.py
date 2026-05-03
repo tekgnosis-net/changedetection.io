@@ -126,3 +126,86 @@ def test_preprocess_unrescuable_raises():
 
     with pytest.raises(vision.VisionImageTooLargeError):
         vision.preprocess_screenshot(src, max_kb=5, max_width=1280)
+
+
+def test_preprocess_with_hint_fast_path(monkeypatch):
+    """Valid hint matching current context → ladder is NOT iterated.
+    PIL.Image.save is called exactly once.
+    Non-default hint values prove the fast-path was taken."""
+    src = _make_png(1280, 720)
+    context = {
+        'model': 'openai/qwen3-vl-32b',
+        'fetcher_backend': 'html_playwright',
+        'api_base': 'http://10.0.20.64:8011/v1',
+        'provider_kind': 'openai_compatible',
+    }
+    # Use non-default hint dimensions to force distinguishable post-condition
+    hint = {**context, 'quality': 70, 'max_width': 800, 'max_height': 4096}
+
+    save_call_count = [0]
+    real_save = Image.Image.save
+
+    def counting_save(self, *a, **kw):
+        save_call_count[0] += 1
+        return real_save(self, *a, **kw)
+
+    monkeypatch.setattr(Image.Image, 'save', counting_save)
+
+    out_bytes, mime, used_hint = vision.preprocess_screenshot(
+        src, hint=hint, context=context
+    )
+    assert mime == 'image/jpeg'
+    assert used_hint['model'] == context['model']
+    # Fast-path: hinted; Ladder default: 85
+    assert used_hint['quality'] == 70
+    # Fast-path: hinted; Ladder default: 1280
+    assert used_hint['max_width'] == 800
+    assert save_call_count[0] == 1, "Ladder must not iterate when hint works"
+
+
+def test_preprocess_with_stale_context_discards_hint():
+    """Hint's embedded model differs from current context's model →
+    hint is silently discarded; ladder runs from defaults; used_hint
+    reflects the new (current) context."""
+    src = _make_png(1280, 720)
+    stale_hint = {
+        'model': 'openai/qwen3-vl-OLD',
+        'fetcher_backend': 'html_playwright',
+        'api_base': 'http://10.0.20.64:8011/v1',
+        'provider_kind': 'openai_compatible',
+        'quality': 65,
+        'max_width': 1024,
+        'max_height': 3000,
+    }
+    current_context = {
+        'model': 'openai/qwen3-vl-NEW',
+        'fetcher_backend': 'html_playwright',
+        'api_base': 'http://10.0.20.64:8011/v1',
+        'provider_kind': 'openai_compatible',
+    }
+    out_bytes, mime, used_hint = vision.preprocess_screenshot(
+        src, hint=stale_hint, context=current_context
+    )
+    assert used_hint['model'] == current_context['model']
+    assert used_hint['quality'] == vision.VISION_JPEG_QUALITY
+
+
+def test_preprocess_with_changed_api_base_discards_hint():
+    """Different api_base in current context → hint discarded."""
+    src = _make_png(1280, 720)
+    hint = {
+        'model': 'openai/qwen3-vl', 'fetcher_backend': 'html_playwright',
+        'api_base': 'http://10.0.20.64:8011/v1',
+        'provider_kind': 'openai_compatible',
+        'quality': 65, 'max_width': 1024, 'max_height': 3000,
+    }
+    current_context = {
+        'model': 'openai/qwen3-vl', 'fetcher_backend': 'html_playwright',
+        'api_base': 'http://10.0.20.65:8012/v1',  # different port
+        'provider_kind': 'openai_compatible',
+    }
+    _, _, used_hint = vision.preprocess_screenshot(
+        src, hint=hint, context=current_context
+    )
+    assert used_hint['api_base'] == current_context['api_base']
+    assert used_hint['quality'] == vision.VISION_JPEG_QUALITY  # ladder ran fresh
