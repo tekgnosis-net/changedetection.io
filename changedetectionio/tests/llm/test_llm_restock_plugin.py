@@ -49,6 +49,7 @@ def _call_plugin(content, url='https://example.com/product',
                 fetcher_instance=None,
                 url=url,
                 llm_intent=llm_intent,
+                watch=None,
             )
     else:
         return llm_restock.get_itemprop_availability_override(
@@ -57,6 +58,7 @@ def _call_plugin(content, url='https://example.com/product',
             fetcher_instance=None,
             url=url,
             llm_intent=llm_intent,
+            watch=None,
         )
 
 
@@ -69,6 +71,8 @@ class TestLLMRestockPluginDisabled:
             fetcher_name='html_requests',
             fetcher_instance=None,
             url='https://example.com/product',
+            llm_intent=None,
+            watch=None,
         )
         assert result is None
 
@@ -223,6 +227,7 @@ class TestLLMRestockPluginIntent:
                 fetcher_instance=None,
                 url='https://example.com',
                 llm_intent='Alert me when price drops below $300',
+                watch=None,
             )
 
         assert result is not None
@@ -247,6 +252,7 @@ class TestLLMRestockPluginIntent:
                 fetcher_instance=None,
                 url='https://example.com',
                 llm_intent=None,
+                watch=None,
             )
 
         user_msg = next(m for m in captured['messages'] if m['role'] == 'user')
@@ -266,6 +272,8 @@ class TestLLMRestockPluginErrorHandling:
                 fetcher_name='html_requests',
                 fetcher_instance=None,
                 url='https://example.com',
+                llm_intent=None,
+                watch=None,
             )
         assert result is None
 
@@ -281,6 +289,8 @@ class TestLLMRestockPluginErrorHandling:
                 fetcher_name='html_requests',
                 fetcher_instance=None,
                 url='https://example.com',
+                llm_intent=None,
+                watch=None,
             )
         assert result is None
 

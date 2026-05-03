@@ -61,7 +61,7 @@ class ChangeDetectionSpec:
         pass
 
     @hookspec
-    def get_itemprop_availability_override(self, content, fetcher_name, fetcher_instance, url, llm_intent=None, watch=None):
+    def get_itemprop_availability_override(self, content, fetcher_name, fetcher_instance, url, llm_intent, watch):
         """Provide custom implementation of get_itemprop_availability for a specific fetcher.
 
         This hook allows plugins to provide their own product availability detection
@@ -73,11 +73,18 @@ class ChangeDetectionSpec:
             fetcher_name: The name of the fetcher being used (e.g., 'html_js_zyte')
             fetcher_instance: The fetcher instance that generated the content
             url: The URL being watched/checked
-            llm_intent: Optional user-supplied intent string (e.g. "alert when price drops below $300")
-            watch: Optional Watch dict; when provided, the impl can read per-watch settings
+            llm_intent: User-supplied intent string (e.g. "alert when price drops below $300"),
+                or None if not set. Positional-required (no default) so pluggy passes it.
+            watch: Watch dict; when provided, the impl can read per-watch settings
                 like llm_use_for_restock, llm_use_vision, llm_vision_verified.
-                Pluggy filters kwargs to what each impl declares, so 3rd-party plugins
-                that don't declare `watch` won't see it — backwards compatible.
+                Positional-required (no default) so pluggy passes it.
+
+        Note on argument signatures: pluggy 1.6 only passes positional-required
+        args to impls (anything default-valued in the signature is silently
+        dropped at call time). Both `llm_intent` and `watch` are therefore
+        positional-required here. 3rd-party impls that don't declare them
+        keep working — pluggy iterates each impl's own argnames, so missing
+        args mean "not asked for, not passed."
 
         Returns:
             dict or None: Dictionary with availability data:

@@ -392,7 +392,7 @@ def run_llm_restock_extraction(watch, text_content, llm_intent=None):
 
 
 @hookimpl
-def get_itemprop_availability_override(content, fetcher_name, fetcher_instance, url, llm_intent=None, watch=None):
+def get_itemprop_availability_override(content, fetcher_name, fetcher_instance, url, llm_intent, watch):
     """Use an LLM as a last-resort fallback for price and restock extraction.
 
     When `watch` is provided, delegates to run_llm_restock_extraction (per-watch
