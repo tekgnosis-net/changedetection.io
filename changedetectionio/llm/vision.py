@@ -275,3 +275,30 @@ def probe_vision_capability(model: str,
         return True, text
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
+
+
+VISION_FAILURE_STRIKE_LIMIT = 3
+
+
+def record_vision_failure(watch) -> bool:
+    """Increment watch.llm_vision_failure_count. If reaches the strike
+    limit, clear watch.llm_vision_verified and reset counter. Returns
+    True iff the verified flag was just cleared."""
+    count = int(watch.get('llm_vision_failure_count', 0)) + 1
+    if count >= VISION_FAILURE_STRIKE_LIMIT:
+        watch['llm_vision_verified'] = False
+        watch['llm_vision_failure_count'] = 0
+        logger.error(
+            f"vision: 3 consecutive failures on watch "
+            f"{getattr(watch, 'uuid', '?')}; cleared verified flag — "
+            f"user must re-probe via 'Test vision capability'"
+        )
+        return True
+    watch['llm_vision_failure_count'] = count
+    return False
+
+
+def reset_vision_failure_count(watch) -> None:
+    """Reset the failure counter on any successful vision call."""
+    if watch.get('llm_vision_failure_count', 0) > 0:
+        watch['llm_vision_failure_count'] = 0

@@ -342,3 +342,18 @@ def test_probe_vision_capability_empty_content():
         )
     assert ok is False
     assert 'empty' in msg.lower() or 'finish_reason' in msg.lower()
+
+
+def test_record_vision_failure_clears_after_three():
+    watch = {}
+    assert vision.record_vision_failure(watch) is False
+    assert vision.record_vision_failure(watch) is False
+    assert vision.record_vision_failure(watch) is True
+    assert watch['llm_vision_verified'] is False
+    assert watch['llm_vision_failure_count'] == 0
+
+
+def test_reset_vision_failure_count():
+    watch = {'llm_vision_failure_count': 2}
+    vision.reset_vision_failure_count(watch)
+    assert watch['llm_vision_failure_count'] == 0
