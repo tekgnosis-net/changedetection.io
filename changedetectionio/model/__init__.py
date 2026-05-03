@@ -193,6 +193,12 @@ class watch_base(dict):
             'llm_change_summary': '',        # Prompt for AI Change Summary — replaces {{ diff }} in notifications
             'llm_prefilter': None,           # CSS selector derived at setup time (semantic only, e.g. "footer")
             'llm_evaluation_cache': {},      # {sha256(intent+diff): {important, summary}} - evaluated once, cached
+            # Vision-related fields (Phase 2 of PR #4117)
+            'llm_use_vision': False,                  # per-watch toggle: send screenshots to LLM
+            'llm_vision_verified': False,             # set True by probe; cleared by JS on edit
+            'llm_use_for_restock': None,              # TernaryNoneBoolean: True/False/None=inherit-from-global
+            'llm_vision_preprocess_hint': None,       # {quality, max_width, max_height, model, fetcher_backend, api_base, provider_kind}
+            'llm_vision_failure_count': 0,            # 3-strikes invalidation counter
             'fetch_backend': 'system',  # plaintext, playwright etc
             'fetch_time': 0.0,
             'filter_failure_notification_send': strtobool(os.getenv('FILTER_FAILURE_NOTIFICATION_SEND_DEFAULT', 'True')),
