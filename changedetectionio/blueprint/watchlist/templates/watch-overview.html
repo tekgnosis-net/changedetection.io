@@ -346,6 +346,18 @@ window.watchOverviewI18n = {
                                 {%- endif -%}
                               </span>
                             {%- endif -%}
+                            {%- set extras = watch.get('llm_extracted_extras') or {} -%}
+                            {%- if extras -%}
+                              <div class="restock-extras">
+                                {%- for k, v in extras.items() -%}
+                                  {%- if v is not none and v != '' and v is not sameas false -%}
+                                    <span class="restock-extra-chip" title="{{ k }}">
+                                      {{ k.replace('_', ' ') }}: {{ v }}
+                                    </span>
+                                  {%- endif -%}
+                                {%- endfor -%}
+                              </div>
+                            {%- endif -%}
                         {%- elif not watch.has_restock_info -%}
                             <span class="restock-label error">{{ _('No information') }}</span>
                         {%- endif -%}

@@ -116,3 +116,87 @@ def test_restock_vision_falls_back_when_no_screenshot(client, live_server):
 
     user_msg = next(m for m in captured['messages'] if m['role'] == 'user')
     assert isinstance(user_msg['content'], str)  # text-only fall-through
+
+
+def test_restock_extras_extracted_and_persisted(client, live_server):
+    """User-defined extras are extracted from the LLM JSON and stored on the watch."""
+    ds = client.application.config['DATASTORE']
+    _, watch = _setup_watch_for_restock(ds)
+    watch['llm_use_for_restock'] = True
+    watch['llm_use_vision'] = False
+    watch['llm_extract_extras'] = 'Detect SALE banner and original price if struck through.'
+
+    from changedetectionio.processors.restock_diff.plugins import llm_restock
+    llm_restock.datastore = ds
+
+    captured = {}
+    def fake(model, messages, **kw):
+        captured['messages'] = messages
+        return ('{"price": 129.0, "currency": "AUD", "availability": "instock", '
+                '"sale_active": true, "original_price": 289.99, "sale_label": "SALE"}',
+                50, 25, 25)
+
+    with patch('changedetectionio.llm.client.completion', side_effect=fake):
+        result = llm_restock.run_llm_restock_extraction(watch, 'page text')
+
+    # Core keys remain in the returned dict
+    assert result.get('price') == 129.0
+    assert result.get('availability') == 'instock'
+    # Extras separated and persisted to the watch
+    assert watch.get('llm_extracted_extras') == {
+        'sale_active': True,
+        'original_price': 289.99,
+        'sale_label': 'SALE',
+    }
+    # The system prompt should include the user's directive
+    sys_msg = captured['messages'][0]['content']
+    assert 'Detect SALE banner' in sys_msg
+
+
+def test_restock_vision_cues_only_when_vision_used(client, live_server):
+    """VISION_CUES_PROMPT is included only when the request actually goes
+    through the vision branch (multipart messages)."""
+    ds = client.application.config['DATASTORE']
+    _, watch = _setup_watch_for_restock(ds, with_screenshot=True)
+    watch['llm_use_for_restock'] = True
+    watch['llm_use_vision'] = True
+    watch['llm_vision_verified'] = True
+
+    from changedetectionio.processors.restock_diff.plugins import llm_restock
+    llm_restock.datastore = ds
+
+    captured = {}
+    def fake(model, messages, **kw):
+        captured['messages'] = messages
+        return ('{"price": 129.0, "currency": "AUD", "availability": "instock"}',
+                50, 25, 25)
+
+    with patch('changedetectionio.llm.client.completion', side_effect=fake):
+        llm_restock.run_llm_restock_extraction(watch, 'page text')
+
+    sys_msg = captured['messages'][0]['content']
+    assert 'VISUAL CUES' in sys_msg, "vision branch should include VISION_CUES_PROMPT"
+    assert 'strikethrough' in sys_msg.lower(), "vision cues should mention strikethrough handling"
+
+
+def test_restock_no_vision_cues_in_text_only(client, live_server):
+    """Counterpart: text-only watches do NOT get VISION_CUES_PROMPT."""
+    ds = client.application.config['DATASTORE']
+    _, watch = _setup_watch_for_restock(ds)
+    watch['llm_use_for_restock'] = True
+    watch['llm_use_vision'] = False
+
+    from changedetectionio.processors.restock_diff.plugins import llm_restock
+    llm_restock.datastore = ds
+
+    captured = {}
+    def fake(model, messages, **kw):
+        captured['messages'] = messages
+        return ('{"price": 129.0, "currency": "AUD", "availability": "instock"}',
+                50, 25, 25)
+
+    with patch('changedetectionio.llm.client.completion', side_effect=fake):
+        llm_restock.run_llm_restock_extraction(watch, 'page text')
+
+    sys_msg = captured['messages'][0]['content']
+    assert 'VISUAL CUES' not in sys_msg, "text-only branch must NOT include VISION_CUES_PROMPT"

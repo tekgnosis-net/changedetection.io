@@ -817,6 +817,13 @@ class processor_text_json_diff_form(commonSettingsForm):
         _l('Use AI for price/stock extraction (when JSON-LD/microdata is missing)'),
         default=None,
     )
+    llm_extract_extras = TextAreaField(
+        _l('Extra data to extract (LLM)'),
+        validators=[validators.Optional(), validators.Length(max=1000)],
+        render_kw={"rows": "3",
+                   "placeholder": "e.g. Detect SALE banner, original price if struck through, discount percentage"},
+        default='',
+    )
 
     include_filters = StringListField(_l('CSS/JSONPath/JQ/XPath Filters'), [ValidateCSSJSONXPATHInput()], default='')
 

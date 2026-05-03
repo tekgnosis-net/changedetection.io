@@ -2835,6 +2835,10 @@ msgid "Use AI for price/stock extraction (when JSON-LD/microdata is missing)"
 msgstr ""
 
 #: changedetectionio/forms.py
+msgid "Extra data to extract (LLM)"
+msgstr ""
+
+#: changedetectionio/forms.py
 msgid "CSS/JSONPath/JQ/XPath Filters"
 msgstr "CSS/JSONPath/JQ/xPath filtry"
 
@@ -3965,6 +3969,17 @@ msgstr ""
 msgid ""
 "When the page lacks structured product metadata (JSON-LD or microdata), the LLM can extract the price and stock state"
 " from page text. Override the global setting on a per-watch basis."
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+msgid "Extra data to extract (optional)"
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+msgid ""
+"Tell the AI what additional information to pull from the page beyond price/availability — for example, the original "
+"price if struck through, a SALE banner, discount percentage, or \"low stock\" urgency text. Each extracted field "
+"appears as a chip on the watchlist."
 msgstr ""
 
 #: changedetectionio/templates/edit/include_llm_intent.html

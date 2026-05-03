@@ -86,6 +86,35 @@ SYSTEM_PROMPT = (
     'No markdown, no backticks, no explanation — pure JSON only.'
 )
 
+VISION_CUES_PROMPT = """VISUAL CUES (the page screenshot is provided alongside this text):
+- A price with a strikethrough (a line drawn through it) is the ORIGINAL or REGULAR price — do NOT use it as the current price.
+- A price displayed in a different colour (often red or orange), a larger font, or bolder weight than nearby prices is typically the current SALE/discounted price — prefer this as `price`.
+- "SALE", "CLEARANCE", "%OFF", "WAS $X NOW $Y", "MEMBER PRICE", "CLUB" banners or badges indicate promotional pricing — treat these as visual confirmation that a sale is active.
+- Use the screenshot to disambiguate when the page text alone is ambiguous about which of two prices is the current selling price."""
+
+EXTRAS_INSTRUCTION_TEMPLATE = """ADDITIONALLY, the user has requested these extra data points:
+{user_directive}
+
+Include any extracted values as additional top-level keys in the JSON response, alongside `price`, `currency`, `availability`. Use lowercase snake_case keys (e.g. `sale_active`, `original_price`, `discount_percent`, `sale_label`, `urgency_text`). Values may be string, number, boolean, or null. Omit keys you cannot determine — do not return null for everything just to pad the schema."""
+
+
+def build_system_prompt(use_vision: bool = False, extras_directive: str = '') -> str:
+    """Compose the system prompt for the restock LLM call.
+
+    The base SYSTEM_PROMPT carries the price/currency/availability rules.
+    VISION_CUES_PROMPT prepends visual-cue guidance when the screenshot is
+    being attached. EXTRAS_INSTRUCTION_TEMPLATE appends a user-defined
+    extraction directive when one is set on the watch.
+    """
+    parts = []
+    if use_vision:
+        parts.append(VISION_CUES_PROMPT)
+    parts.append(SYSTEM_PROMPT)
+    if extras_directive and extras_directive.strip():
+        parts.append(EXTRAS_INSTRUCTION_TEMPLATE.format(user_directive=extras_directive.strip()))
+    return '\n\n'.join(parts)
+
+
 _MAX_CONTENT_CHARS = 8_000
 
 
@@ -236,6 +265,13 @@ def run_llm_restock_extraction(watch, text_content, llm_intent=None):
     if llm_intent:
         user_prompt += f'\n\nUser notification intent: {llm_intent}'
 
+    # Compute extras directive up front (used in both vision and text-only prompts)
+    extras_directive = (watch.get('llm_extract_extras') or '').strip()
+
+    # Pre-build both system prompt variants so the right one is used at each call site
+    system_prompt_text = build_system_prompt(use_vision=False, extras_directive=extras_directive)
+    system_prompt_vision = build_system_prompt(use_vision=True, extras_directive=extras_directive)
+
     # Gate 2: vision sub-gate
     use_vision = (
         watch.get('llm_use_vision')
@@ -252,12 +288,12 @@ def run_llm_restock_extraction(watch, text_content, llm_intent=None):
                 text_user_content=user_prompt,
                 image_bytes=image_bytes,
                 mime_type=mime,
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=system_prompt_vision,
             )
 
     if messages is None:
         messages = [
-            {'role': 'system', 'content': SYSTEM_PROMPT},
+            {'role': 'system', 'content': system_prompt_text},
             {'role': 'user', 'content': user_prompt},
         ]
 
@@ -288,7 +324,7 @@ def run_llm_restock_extraction(watch, text_content, llm_intent=None):
         if _vision_was_used:
             _vision.record_vision_failure(watch)
             text_messages = [
-                {'role': 'system', 'content': SYSTEM_PROMPT},
+                {'role': 'system', 'content': system_prompt_text},
                 {'role': 'user', 'content': user_prompt},
             ]
             try:
@@ -327,6 +363,12 @@ def run_llm_restock_extraction(watch, text_content, llm_intent=None):
         except (ValueError, TypeError):
             logger.warning(f"llm_restock: could not convert price {price!r} to float, ignoring")
             result['price'] = None
+
+    # Separate core keys from user-requested extras; persist extras to watch
+    core_keys = {'price', 'currency', 'availability'}
+    extras = {k: v for k, v in result.items() if k not in core_keys}
+    # Reset to a fresh dict per run so stale extras from a previous run don't leak through
+    watch['llm_extracted_extras'] = extras
 
     if result.get('price') is None and not result.get('availability'):
         logger.info(f"llm_restock: LLM returned no usable price or availability for {url}")

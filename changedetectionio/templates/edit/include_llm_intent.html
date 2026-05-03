@@ -151,6 +151,17 @@
 
     <hr style="margin: 1.2em 0; border: none; border-top: 1px solid var(--color-border, #ddd);">
 
+    {# Extra data to extract (Layer A) #}
+    <h4 style="margin: 0 0 0.3em 0;">{{ _('Extra data to extract (optional)') }}</h4>
+    <p class="pure-form-message-inline" style="margin-top:0">
+        {{ _('Tell the AI what additional information to pull from the page beyond price/availability — for example, the original price if struck through, a SALE banner, discount percentage, or "low stock" urgency text. Each extracted field appears as a chip on the watchlist.') }}
+    </p>
+    <div class="pure-control-group">
+        {{ render_field(form.llm_extract_extras, class="pure-input-1") }}
+    </div>
+
+    <hr style="margin: 1.2em 0; border: none; border-top: 1px solid var(--color-border, #ddd);">
+
     {# Vision sub-toggle #}
     <h4 style="margin: 0 0 0.3em 0;">{{ _('Vision (optional)') }}</h4>
     <p class="pure-form-message-inline" style="margin-top:0">

@@ -197,6 +197,8 @@ class watch_base(dict):
             'llm_use_vision': False,                  # per-watch toggle: send screenshots to LLM
             'llm_vision_verified': False,             # set True by probe; cleared by JS on edit
             'llm_use_for_restock': None,              # TernaryNoneBoolean: True/False/None=inherit-from-global
+            'llm_extract_extras': '',                 # User-defined directive: extra fields to extract alongside price/availability
+            'llm_extracted_extras': {},               # Per-run output dict: extra fields returned by LLM (e.g. sale_active, original_price)
             'llm_vision_preprocess_hint': None,       # {quality, max_width, max_height, model, fetcher_backend, api_base, provider_kind}
             'llm_vision_failure_count': 0,            # 3-strikes invalidation counter
             'fetch_backend': 'system',  # plaintext, playwright etc
