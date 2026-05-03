@@ -1,9 +1,9 @@
 """Unit tests for changedetectionio.llm.vision."""
 import base64
-import io  # noqa: F401
+import io
 from unittest.mock import MagicMock
 
-from PIL import Image  # noqa: F401
+from PIL import Image
 
 from changedetectionio.llm import vision
 
@@ -40,3 +40,59 @@ def test_load_screenshot_present_returns_bytes(tmp_path):
     watch.data_dir = str(tmp_path)
     result = vision.load_screenshot(watch)
     assert result == payload
+
+
+def _make_png(width, height, color=(128, 128, 128)) -> bytes:
+    """Synthesize a solid-color PNG of given dimensions for tests."""
+    buf = io.BytesIO()
+    Image.new('RGB', (width, height), color=color).save(buf, format='PNG')
+    return buf.getvalue()
+
+
+def test_preprocess_normal_screenshot_returns_jpeg_under_cap():
+    """1280x720 PNG → JPEG output, dimensions preserved, under max_kb."""
+    src = _make_png(1280, 720)
+    out_bytes, mime, _hint = vision.preprocess_screenshot(src)
+    assert mime == 'image/jpeg'
+    img = Image.open(io.BytesIO(out_bytes))
+    assert img.size == (1280, 720)
+    assert len(out_bytes) <= vision.VISION_IMAGE_MAX_KB * 1024
+
+
+def test_preprocess_full_page_top_cropped():
+    """1280x20000 (full-page) PNG → 1280x4096 JPEG (top-cropped).
+    Below-the-fold content is dropped; this is documented behavior."""
+    src = _make_png(1280, 20000)
+    out_bytes, mime, _hint = vision.preprocess_screenshot(src)
+    img = Image.open(io.BytesIO(out_bytes))
+    assert img.size == (1280, vision.VISION_IMAGE_MAX_HEIGHT)
+
+
+def test_preprocess_oversize_width_resized_proportionally():
+    """3840x2160 (4K) → 1280xN (proportional resize to width cap)."""
+    src = _make_png(3840, 2160)
+    out_bytes, _, _ = vision.preprocess_screenshot(src)
+    img = Image.open(io.BytesIO(out_bytes))
+    assert img.width == vision.VISION_IMAGE_MAX_WIDTH
+    expected_height = int(2160 * (vision.VISION_IMAGE_MAX_WIDTH / 3840))
+    assert abs(img.height - expected_height) <= 1
+
+
+def test_preprocess_rgba_handled():
+    """RGBA PNG → flattens to RGB JPEG."""
+    buf = io.BytesIO()
+    Image.new('RGBA', (1000, 800), color=(255, 0, 0, 128)).save(buf, format='PNG')
+    out_bytes, mime, _ = vision.preprocess_screenshot(buf.getvalue())
+    assert mime == 'image/jpeg'
+    img = Image.open(io.BytesIO(out_bytes))
+    assert img.mode == 'RGB'
+
+
+def test_preprocess_returns_used_hint_dict():
+    """Third return value is the hint dict; caller persists it on the watch."""
+    src = _make_png(1280, 720)
+    _, _, used_hint = vision.preprocess_screenshot(src)
+    assert isinstance(used_hint, dict)
+    assert 'quality' in used_hint
+    assert 'max_width' in used_hint
+    assert 'max_height' in used_hint

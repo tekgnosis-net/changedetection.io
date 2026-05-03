@@ -12,6 +12,7 @@ Image preprocessing rationale:
   gets badly downsampled inside the model. We crop + resize before sending.
 """
 import base64
+import io
 import os
 
 from loguru import logger
@@ -57,3 +58,78 @@ def load_screenshot(watch) -> bytes | None:
         return None
     with open(path, 'rb') as f:
         return f.read()
+
+
+_HINT_CONTEXT_KEYS = ('model', 'fetcher_backend', 'api_base', 'provider_kind')
+
+
+def _try_encode(img, quality: int) -> bytes:
+    """Encode a PIL Image as JPEG at the given quality."""
+    out = io.BytesIO()
+    img.save(out, format='JPEG', quality=quality, optimize=True)
+    return out.getvalue()
+
+
+def preprocess_screenshot(image_bytes: bytes,
+                          *,
+                          hint:       dict | None = None,
+                          context:    dict | None = None,
+                          max_width:  int = VISION_IMAGE_MAX_WIDTH,
+                          max_height: int = VISION_IMAGE_MAX_HEIGHT,
+                          max_kb:     int = VISION_IMAGE_MAX_KB,
+                          quality:    int = VISION_JPEG_QUALITY) -> tuple[bytes, str, dict]:
+    """Resize, top-crop, JPEG-recompress a screenshot for vision-model input.
+    Returns (processed_bytes, mime_type='image/jpeg', used_hint).
+
+    Pipeline (top-down on each retry):
+      1. Open with PIL; convert to RGB if needed (drops alpha).
+      2. Width-cap: width > max_width → downscale proportionally (LANCZOS).
+      3. Height-cap: height > max_height → top-crop (above-the-fold kept).
+      4. Re-encode as JPEG at `quality`.
+      5. If size > max_kb, descend the quality ladder (85 → 75 → 65 → 55).
+      6. If still over, scale dimensions ×0.85 and retry (up to 3 dim retries).
+      7. If still over, raise VisionImageTooLargeError.
+
+    Hint logic (added in next task) lives at the top of this body.
+    """
+    from PIL import Image
+    img = Image.open(io.BytesIO(image_bytes))
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+
+    cur_max_width = max_width
+    quality_ladder = [quality, 75, 65, 55]
+    cap_bytes = max_kb * 1024
+    final_max_height = max_height
+    context_fields = {k: (context.get(k) if context else None)
+                      for k in _HINT_CONTEXT_KEYS}
+
+    for dim_retry in range(4):
+        scaled = img
+        if scaled.width > cur_max_width:
+            new_height = int(scaled.height * (cur_max_width / scaled.width))
+            scaled = scaled.resize((cur_max_width, new_height), Image.LANCZOS)
+        if scaled.height > max_height:
+            scaled = scaled.crop((0, 0, scaled.width, max_height))
+
+        for q in quality_ladder:
+            data = _try_encode(scaled, q)
+            if len(data) <= cap_bytes:
+                logger.debug(
+                    f"vision.preprocess: size={scaled.size} q={q} "
+                    f"bytes={len(data)} dim_retry={dim_retry}"
+                )
+                return data, 'image/jpeg', {
+                    'quality': q,
+                    'max_width': cur_max_width,
+                    'max_height': final_max_height,
+                    **context_fields,
+                }
+
+        cur_max_width = int(cur_max_width * 0.85)
+        if cur_max_width < 256:
+            break
+
+    raise VisionImageTooLargeError(
+        f"Image still over {max_kb} KB after quality ladder + 3 dim retries"
+    )
