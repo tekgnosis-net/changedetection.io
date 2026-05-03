@@ -138,6 +138,41 @@
         {% endif %}
     </div>
     {% endif %}{# _is_text_json_diff #}
+
+    {% if _is_restock_diff %}
+    {# AI for restock #}
+    <h4 style="margin: 0 0 0.3em 0;">{{ _('AI — Use the LLM for price/stock extraction') }}</h4>
+    <p class="pure-form-message-inline" style="margin-top:0">
+        {{ _('When the page lacks structured product metadata (JSON-LD or microdata), the LLM can extract the price and stock state from page text. Override the global setting on a per-watch basis.') }}
+    </p>
+    <div class="pure-control-group">
+        {{ render_field(form.llm_use_for_restock) }}
+    </div>
+
+    <hr style="margin: 1.2em 0; border: none; border-top: 1px solid var(--color-border, #ddd);">
+
+    {# Vision sub-toggle #}
+    <h4 style="margin: 0 0 0.3em 0;">{{ _('Vision (optional)') }}</h4>
+    <p class="pure-form-message-inline" style="margin-top:0">
+        {{ _('When AI-for-restock is on, also send the page screenshot. If the model rejects the image or no screenshot is available, gracefully falls back to text-only LLM extraction.') }}
+    </p>
+    {% set _provider_kind = (llm_config.get('provider_kind') if llm_config else '') %}
+    {% set _is_local_compatible = _provider_kind == 'openai_compatible' %}
+    <div class="pure-control-group">
+        {% if not _is_local_compatible %}
+        <p class="pure-form-message-inline" style="opacity:0.7;">
+            {{ _('Vision is currently only enabled for the OpenAI-compatible (vLLM, LM Studio, llama.cpp) provider.') }}
+        </p>
+        {% else %}
+        {{ render_field(form.llm_use_vision) }}
+        {{ form.llm_vision_verified() }}
+        <button type="button" id="llm-vision-test-btn" class="pure-button button-xsmall" onclick="llmVisionTest()">
+            &#9654; {{ _('Test vision capability') }}
+        </button>
+        <span id="llm-vision-test-result" style="margin-left:0.6em;font-size:.85em;"></span>
+        {% endif %}
+    </div>
+    {% endif %}{# _is_restock_diff #}
 </div>
 
 {# ── Not configured: greyed-out prompt to configure ──────────────── #}
