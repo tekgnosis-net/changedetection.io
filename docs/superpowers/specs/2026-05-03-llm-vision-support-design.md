@@ -24,7 +24,7 @@ The fork now supports self-hosted OpenAI-compatible LLM endpoints (PR #4117). Lo
 | Decision | Locked answer |
 |---|---|
 | **UI placement** | Lift the `is_text_json_diff` gate; the AI tab becomes processor-aware. `text_json_diff` watches see existing intent + summary + new vision toggle; `restock_diff` watches see vision-only; other processors continue to see no AI content. |
-| **MVP scope** | Two call paths: (a) restock vision (price/stock extraction in `processors/restock_diff/plugins/llm_restock.py`), (b) text_json_diff change summary vision (`evaluator.summarise_change`). `evaluate_change` (intent eval) deferred — touches `llm_evaluation_cache` keying. |
+| **MVP scope** | Two call paths: (a) AI-for-restock — promotes the existing global `llm_restock_use_fallback_extract` to a per-watch toggle in the AI tab; vision is a sub-option that augments the LLM extraction when the configured local model supports it (graceful fall-through to text-only LLM extraction when vision fails). (b) text_json_diff change summary vision (`evaluator.summarise_change`). `evaluate_change` (intent eval) deferred — touches `llm_evaluation_cache` keying. |
 | **Provider gate** | `provider_kind == 'openai_compatible'` only. Toggle is greyed-out / disabled for cloud providers (OpenAI, Anthropic, Gemini, OpenRouter) and Ollama. Cloud vision becomes a follow-up if/when there's demand. |
 | **Capability check** | Live probe button "Test vision capability" parallels existing "Test connection". Sends a 16×16 embedded probe image with a trivial prompt; on success unlocks the toggle for save; on failure blocks save and shows the error inline. |
 | **Screenshot scope** | Current screenshot only (`<watch.data_dir>/last-screenshot.png`). Design includes a deferred `previous_screenshot_path` parameter in `vision.py` signatures so before+after summaries can be added later without changing call sites. |
@@ -133,6 +133,7 @@ def load_screenshot(watch) -> bytes | None:
 def preprocess_screenshot(image_bytes: bytes,
                           *,
                           hint:       dict | None = None,
+                          context:    dict | None = None,
                           max_width:  int = VISION_IMAGE_MAX_WIDTH,
                           max_height: int = VISION_IMAGE_MAX_HEIGHT,
                           max_kb:     int = VISION_IMAGE_MAX_KB,
@@ -140,29 +141,48 @@ def preprocess_screenshot(image_bytes: bytes,
     """Resize, top-crop, JPEG-recompress with quality + dim ladder.
     Returns (processed_bytes, mime_type='image/jpeg', used_hint).
 
-    `hint` is an optional dict {quality, max_width, max_height} from a prior
-    successful preprocess on this same watch — fast-path:
-      - if hint is provided, try those params FIRST. If under cap, return
-        immediately (one encode, no ladder).
-      - if hinted params produce over-cap output, fall back to the full
-        ladder starting from defaults.
+    `hint` is an optional dict from a prior successful preprocess on this
+    watch:
+      {quality, max_width, max_height, model, fetcher_backend}
+    The last two fields (model, fetcher_backend) are the *context* the hint
+    was captured under. The hint is treated as valid only if `context`
+    matches `hint`'s context — same model + same fetcher backend. Different
+    context (user changed model on the local endpoint, swapped to a
+    different fetcher) → hint is silently discarded and the ladder runs
+    fresh. This makes the hint self-describing; no external "invalidate on
+    event X" plumbing is required.
 
-    `used_hint` is the dict that produced the returned bytes; caller persists
-    it on the watch (overwriting the previous hint) so the next run takes
-    the fast path. Page-layout drift self-corrects: if the page changes and
-    the old hint becomes insufficient, the ladder runs once and the hint
-    updates.
+    `context` is the current run's context: {model, fetcher_backend}.
+
+    Fast-path:
+      - if hint is provided AND its context matches the current `context`,
+        try the hinted params FIRST. If under cap, return immediately (one
+        encode, no ladder).
+      - else (no hint, stale-context hint, or hinted params produce over-cap
+        output): fall back to the full ladder starting from defaults.
+
+    `used_hint` is the dict that produced the returned bytes — including the
+    current context fields — and the caller persists it on the watch.
+    Page-layout drift, model swap on the local endpoint, and fetcher swap
+    all self-correct via the same mechanism: stale-context hint → ladder
+    runs once → hint updates with the new context.
 
     Raises VisionImageTooLargeError if unrescuable after 3 ladder retries."""
 
 def encode_as_data_url(image_bytes: bytes, mime_type: str) -> str:
     """Wrap preprocessed bytes in OpenAI-format data URL."""
 
-def load_and_prepare_screenshot(watch) -> tuple[bytes, str] | None:
+def load_and_prepare_screenshot(watch, llm_cfg: dict) -> tuple[bytes, str] | None:
     """Convenience: load_screenshot + preprocess_screenshot, with hint
-    fast-path persistence.
+    fast-path persistence and self-describing context.
 
-    Reads `watch.get('llm_vision_preprocess_hint')` and passes to preprocess.
+    Builds the current run's context from llm_cfg and the watch:
+      {'model': llm_cfg['model'], 'fetcher_backend': watch['fetch_backend']}
+    Reads `watch.get('llm_vision_preprocess_hint')` and passes both `hint`
+    and `context` to preprocess. preprocess silently discards the hint if
+    its embedded context doesn't match the current context (e.g. user
+    changed the served model on the local endpoint).
+
     On success, if used_hint != stored hint, updates watch[...] in-place
     (persisted at the watch's next commit by the worker, same lifecycle as
     other watch-state mutations). Returns (bytes, mime) or None on missing
@@ -190,19 +210,19 @@ def probe_vision_capability(model: str,
 
 | File | Change | LOC |
 |---|---|---|
-| `forms.py` | Add `BooleanField llm_use_vision` + `HiddenField llm_vision_verified` to per-watch form. | +15 |
+| `forms.py` | Add to per-watch form: `BooleanField llm_use_vision`, `HiddenField llm_vision_verified`, and `TernaryNoneBooleanField llm_use_for_restock` (True / False / None=inherit-from-global; the existing `widgets/ternary_boolean.py` widget). | +25 |
 | `blueprint/settings/llm.py` | New `/vision-test` route paralleling `llm_test`. Calls `vision.probe_vision_capability` and returns `{ok, error, text, tokens}` JSON. | +25 |
-| `templates/edit/include_llm_intent.html` | Drop the `{% if is_text_json_diff %}` gate at line 32. Branch into processor-aware sections: text_json_diff (intent + summary + vision), restock_diff (vision-only), other (no content). Add the vision section template with toggle, "Test vision capability" button, result panel, cloud-provider greying logic. | +30 / -1 |
+| `templates/edit/include_llm_intent.html` | Drop the `{% if is_text_json_diff %}` gate at line 32. Branch into processor-aware sections: text_json_diff (intent + summary + vision), restock_diff (two-tier: AI-for-restock toggle + nested vision sub-toggle), other (no content). Vision sub-toggle is greyed-out when the parent AI-for-restock toggle is force-off. Vision section includes toggle, "Test vision capability" button, result panel, cloud-provider greying. | +45 / -1 |
 | `llm/evaluator.py:summarise_change` | Read `watch.llm_use_vision` + `watch.llm_vision_verified`. If both set + `provider_kind == 'openai_compatible'` + fetcher is browser-based, call `vision.load_and_prepare_screenshot` + `vision.build_vision_messages` and pass to `client.completion`. Fall through to existing text path on `None`. | +15 |
-| `processors/restock_diff/plugins/llm_restock.py` | Same gate + load + build pattern. Different system prompt (existing restock prompt + "look at this image" addition). Returns same `{price, currency, availability}` JSON shape — same parser, same caller. | +15 |
-| `model/__init__.py` | Add to watch base dict: `'llm_use_vision': False`, `'llm_vision_verified': False`, `'llm_vision_preprocess_hint': None` (the last is a `{quality, max_width, max_height}` dict cached from the previous successful vision preprocess on this watch — used for fast-path on subsequent runs to avoid re-iterating the quality ladder). | +3 |
+| `processors/restock_diff/plugins/llm_restock.py` | (a) New first-gate: read `watch.get('llm_use_for_restock')` — if explicit False, return early (LLM is never invoked for this watch); if explicit True or None (inherit), fall through to the existing global `llm_restock_use_fallback_extract` gate. (b) When LLM is invoked: same vision-load + build pattern as `summarise_change`. Different system prompt (existing restock prompt + "look at this image" addition when image present). If vision returns None (model rejected / no screenshot / no openai_compatible), gracefully falls through to existing text-only LLM extraction. Returns same `{price, currency, availability}` JSON shape — same parser, same caller. | +25 |
+| `model/__init__.py` | Add to watch base dict: `'llm_use_vision': False`, `'llm_vision_verified': False`, `'llm_use_for_restock': None` (TernaryNoneBoolean default — None means inherit from global `llm_restock_use_fallback_extract`), `'llm_vision_preprocess_hint': None` (last is a `{quality, max_width, max_height, model, fetcher_backend}` dict — the trailing two fields are the self-describing context that determines whether the hint is reused or discarded on the next run). | +4 |
 
 ### New test files
 
 | File | Purpose | LOC |
 |---|---|---|
-| `tests/llm/test_vision.py` | Unit tests for `vision.py` in isolation; mocks `litellm.completion` for probe tests. Includes hint fast-path coverage (`test_preprocess_with_hint_fast_path`, `test_preprocess_with_stale_hint_falls_back_to_ladder`). | ~90 |
-| `tests/llm/test_vision_restock.py` | Integration test: restock vision call path produces multipart messages + parses response. | ~30 |
+| `tests/llm/test_vision.py` | Unit tests for `vision.py` in isolation; mocks `litellm.completion` for probe tests. Includes hint fast-path coverage (`test_preprocess_with_hint_fast_path`, `test_preprocess_with_stale_hint_falls_back_to_ladder`, `test_preprocess_with_stale_context_discards_hint`). | ~95 |
+| `tests/llm/test_vision_restock.py` | Integration test: four scenarios — `llm_use_for_restock=False` (LLM never invoked), text-only LLM, vision-multipart with valid screenshot, graceful fall-through to text-only when vision returns None. | ~50 |
 | `tests/llm/test_vision_summary.py` | Integration test: text_json_diff change-summary vision call path. | ~30 |
 | `tests/llm/test_vision_endpoint.py` | Integration test for `/settings/llm/vision-test` route. | ~25 |
 | `tests/llm/test_vision_regression.py` | **Load-bearing**: vision-off watches produce byte-identical `messages` to today's behavior. | ~20 |
@@ -213,7 +233,7 @@ def probe_vision_capability(model: str,
 
 ### Total estimated footprint
 
-**~340–420 LOC of code + ~185 LOC of tests = ~525–605 LOC end-to-end** across 6 changed files + 1 new module + 5 new test files. Single-PR scope; comparable to PR #4117 in size.
+**~370–460 LOC of code + ~220 LOC of tests = ~590–680 LOC end-to-end** across 6 changed files + 1 new module + 5 new test files. Slightly larger than PR #4117; still single-PR scope. The growth vs. the original estimate (~525-605 LOC) is from (a) the AI-for-restock per-watch toggle elevating LLM-restock to a first-class per-watch option, and (b) the hint-context plumbing for self-correcting model-change invalidation. Both are user-driven design refinements made during the brainstorming review.
 
 ---
 
@@ -230,12 +250,15 @@ def probe_vision_capability(model: str,
 ### (B) Watch run — restock extraction with vision
 
 1. Worker runs the restock_diff processor on a watch with vision enabled.
-2. Existing structured-data extraction (JSON-LD / microdata) runs first — if successful, vision path is skipped (this PR doesn't change that priority).
-3. If structured data is missing, fall through to the LLM fallback path in `llm_restock.py`. Check `watch.llm_use_vision AND watch.llm_vision_verified AND llm_cfg.provider_kind == 'openai_compatible'`.
-4. If gated on, call `vision.load_and_prepare_screenshot(watch)` — opens `last-screenshot.png`, reads `watch['llm_vision_preprocess_hint']`, runs preprocessing (resize, top-crop, JPEG q=85, quality ladder if oversize — but if a valid hint exists from a prior successful run, fast-path attempts the hinted params first, skipping the ladder when the hint still works). On success, updates the watch's hint in-place if changed; the worker commits the watch at end-of-check (existing lifecycle). Returns `(bytes, mime)` or `None`.
-5. If `None` (missing screenshot, decode failure, or unrescuable size), fall through to existing text-only path. INFO/WARN logged.
-6. Otherwise, `vision.build_vision_messages(user_prompt, image_bytes, mime, system=SYSTEM_PROMPT)` returns multipart list.
-7. `client.completion(model, messages, api_key, api_base, max_tokens=apply_local_token_multiplier(80, llm_cfg))` issues the call. Same `apply_local_token_multiplier` introduced in PR #4117.
+2. Existing structured-data extraction (JSON-LD / microdata) runs first — if successful, the LLM path is skipped entirely (this PR doesn't change that priority).
+3. **New first-gate**: read `effective_use_for_restock`:
+   - if `watch.get('llm_use_for_restock')` is `True` or `False` → use it
+   - else (None, inherit) → fall back to global `app_settings['llm_restock_use_fallback_extract']`
+   If `effective_use_for_restock` is False, **return early — LLM is not invoked for this watch's restock at all**. (This is the upgrade: previously the only kill-switch was global; now per-watch can override either way.)
+4. If `effective_use_for_restock` is True, fall through to the LLM fallback path in `llm_restock.py`.
+5. **Vision sub-gate**: check `watch.llm_use_vision AND watch.llm_vision_verified AND llm_cfg.provider_kind == 'openai_compatible'`. If gated on, attempt vision: call `vision.load_and_prepare_screenshot(watch, llm_cfg)` — opens `last-screenshot.png`, reads the watch's hint, builds the current run's context `{model, fetcher_backend}`, passes both to `preprocess_screenshot`. The hint's embedded context is compared with the current context — if they don't match (e.g. the served model on the local endpoint changed since the hint was captured), the hint is silently discarded and the ladder runs fresh. Otherwise, fast-path the hinted params. On success, updates the watch's hint in-place with the current context; the worker commits the watch at end-of-check (existing lifecycle).
+6. If vision returns `None` (vision sub-gate not met, missing screenshot, decode failure, model rejected the image, etc.), or if the vision request to the LLM fails at runtime (caught at the call site), **gracefully fall through to existing text-only LLM extraction** — the same code path that runs today when vision is off. This is the key UX guarantee: enabling AI-for-restock improves restock detection even when vision can't be used.
+7. Whichever path runs (vision-multipart or text-only), `vision.build_vision_messages` (with image) or the existing text-only `messages` list is passed to `client.completion(model, messages, api_key, api_base, max_tokens=apply_local_token_multiplier(80, llm_cfg))`. Same `apply_local_token_multiplier` introduced in PR #4117.
 8. Response JSON parsed normally; same `{price, currency, availability}` shape; same downstream consumers.
 
 ### (C) Watch run — text_json_diff change summary with vision
@@ -243,7 +266,7 @@ def probe_vision_capability(model: str,
 1. Worker detects a change on a text_json_diff watch with vision enabled.
 2. Existing text-diff is computed; user's `llm_change_summary` prompt resolved via cascade.
 3. Check `watch.llm_use_vision AND watch.llm_vision_verified AND llm_cfg.provider_kind == 'openai_compatible' AND fetcher_is_browser_based(watch)`. The fetcher gate is new for this path: `fetcher_is_browser_based` returns `True` iff `watch.get('fetch_backend')` is one of `html_webdriver`, `html_playwright`, `html_puppeteer` (or any pluggy-registered fetcher whose class is a `Fetcher` subclass that produces actual screenshots — `html_requests` is excluded because its `self.screenshot` field holds the raw HTTP response body, not an image).
-4. `vision.load_and_prepare_screenshot(watch)` → `(bytes, mime)` or `None`.
+4. `vision.load_and_prepare_screenshot(watch, llm_cfg)` → `(bytes, mime)` or `None`. Same hint + context behaviour as in flow (B): if the watch's stored hint context (`{model, fetcher_backend}`) matches the current run's context, the fast-path runs the hinted params first; otherwise the ladder runs fresh and the hint is updated. Persisted in-place; committed at end-of-check via the existing watch lifecycle.
 5. If non-`None`, `build_vision_messages(diff_text, image_bytes, mime, system=summary_prompt + image_hint)` returns multipart list.
 6. If `None`, fall through to existing text-only `messages` construction.
 7. `client.completion(messages, max_tokens=apply_local_token_multiplier(_summary_max_tokens(diff), llm_cfg))`. Returns summary text.
@@ -256,7 +279,8 @@ def probe_vision_capability(model: str,
 | `watch.llm_use_vision` | Form save with toggle on | Form save with toggle off | Gates the vision call paths |
 | `watch.llm_vision_verified` | JS sets after probe success | JS clears on global model/api_base change; form rejects save with vision-on but unverified | Prevents save with broken setup |
 | `last-screenshot.png` (per-watch) | Worker on every successful browser fetch (existing) | Watch deletion (existing) | Source data |
-| `watch.llm_vision_preprocess_hint` | After every successful preprocess in `load_and_prepare_screenshot`; only written if differs from prior value | When worker fetcher backend changes (different rendering = different page); when watch is cloned (cloned watches start fresh) | Fast-path for `preprocess_screenshot` so the quality ladder doesn't re-iterate when the page's dimensions are stable across runs |
+| `watch.llm_use_for_restock` | Form save (TernaryNoneBoolean True / False / None=inherit) | Watch deletion | Per-watch override of the global `llm_restock_use_fallback_extract` kill-switch; gates whether `llm_restock.py` runs the LLM fallback at all |
+| `watch.llm_vision_preprocess_hint` | After every successful preprocess in `load_and_prepare_screenshot`; only written if differs from prior value (includes a context block `{model, fetcher_backend}`) | Implicitly invalidated whenever the embedded context doesn't match the current run's context — i.e. user changed the served model on the local endpoint, or swapped the watch's fetcher backend. No explicit-event invalidation needed; self-describing | Fast-path for `preprocess_screenshot` so the quality ladder doesn't re-iterate when both the page's dimensions and the model+fetcher are stable across runs |
 | `llm_evaluation_cache` (existing on `evaluate_change`) | Unchanged in this PR | Unchanged | MVP doesn't touch the cached call path; relevant only if vision is later wired into `evaluate_change` |
 
 ---
@@ -283,8 +307,8 @@ Vision is a *parallel* path next to existing logic, never a *replacement*. The t
 
 ### Test files (unit + integration)
 
-- **`tests/llm/test_vision.py`** — 16 unit tests covering: preprocessing (normal, full-page top-crop, quality ladder, dimension shrink, unrescuable, RGBA, **hint fast-path on stable image, hint fall-back when stale**), `build_vision_messages` shape, `probe_vision_capability` success/rejection/timeout, `load_screenshot` missing/corrupt cases. The two hint tests verify the per-watch persisted-params optimization: `preprocess_screenshot` is invoked exactly once (no ladder iteration) when the hint still works, and falls through to the full ladder + emits an updated hint when the page has drifted enough that the cached params no longer fit.
-- **`tests/llm/test_vision_restock.py`** — integration: configures a restock watch with vision flags + planted screenshot; mocks `litellm.completion`; asserts captured `messages` is multipart and the JSON parse downstream still works.
+- **`tests/llm/test_vision.py`** — 17 unit tests covering: preprocessing (normal, full-page top-crop, quality ladder, dimension shrink, unrescuable, RGBA, **hint fast-path on stable image, hint fall-back when image drifted, hint discarded on context mismatch**), `build_vision_messages` shape, `probe_vision_capability` success/rejection/timeout, `load_screenshot` missing/corrupt cases. The three hint tests verify the per-watch persisted-params optimization: `preprocess_screenshot` is invoked exactly once (no ladder iteration) when the hint and its embedded context still match; falls through to the full ladder + emits an updated hint when image dimensions have drifted; **silently discards the hint and runs fresh when the embedded `model` or `fetcher_backend` differs from the current run's context** (proves stale-on-model-change handling).
+- **`tests/llm/test_vision_restock.py`** — integration: covers four cases — (1) `llm_use_for_restock=False` → LLM never invoked (assert no `litellm.completion` call); (2) `llm_use_for_restock=True` + vision off → existing text-only LLM call; (3) `llm_use_for_restock=True` + vision on with valid screenshot → multipart `litellm.completion` with `image_url`; (4) `llm_use_for_restock=True` + vision on but screenshot missing → graceful fall-through to text-only multipart-less call. All assert the same downstream `{price, currency, availability}` JSON parse works.
 - **`tests/llm/test_vision_summary.py`** — integration: text_json_diff watch + browser fetcher + vision flags; asserts captured `messages` is multipart with system prompt mentioning visual context; asserts `{{ diff }}` resolves to mocked summary.
 - **`tests/llm/test_vision_endpoint.py`** — integration: `/settings/llm/vision-test` route with mocked `litellm.completion` for success and failure paths.
 - **`tests/llm/test_vision_regression.py`** — load-bearing invariant: vision-off watches produce byte-identical `messages` (no `image_url` entries) compared to today.
@@ -331,11 +355,11 @@ For the eventual `writing-plans` skill phase. Each step is independently mergeab
 
 1. **`vision.py` skeleton + unit tests** — module with all functions stubbed; tests pass for preprocess, build_messages, probe (mocked litellm).
 2. **`/settings/llm/vision-test` route** + endpoint integration test.
-3. **Form + Watch model fields** — `llm_use_vision`, `llm_vision_verified`. Defaults False. Persisted through form save.
+3. **Form + Watch model fields** — `llm_use_vision` (BooleanField, default False), `llm_vision_verified` (HiddenField, default False), `llm_use_for_restock` (TernaryNoneBoolean, default None=inherit-from-global), `llm_vision_preprocess_hint` (None, dict on first successful preprocess; includes embedded `model` + `fetcher_backend` context). All persisted through form save.
 4. **Template lift the gate + add vision section** — `include_llm_intent.html` becomes processor-aware.
 5. **Browser-side JS** — toggle interaction, probe button, result rendering, verified-flag clearing on edit.
 6. **Wire `summarise_change`** — vision branch with fall-through; integration test.
-7. **Wire `llm_restock`** — vision branch with fall-through; integration test.
+7. **Wire `llm_restock`** — (a) new first-gate reads `effective_use_for_restock` (per-watch override → global setting), returns early if False; (b) vision branch with graceful fall-through to text-only LLM extraction when vision unavailable; integration tests cover all four scenarios (use=False / text-only / vision / vision-fallback-to-text).
 8. **Regression test** — assert vision-off path is byte-identical.
 9. **3-strikes invalidation** — counter on watch, error-handler clears `llm_vision_verified`. Hard to integration-test cleanly; manual verification sufficient.
 10. **Translations** — extract / update / compile.
