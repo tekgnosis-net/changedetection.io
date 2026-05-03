@@ -21,21 +21,21 @@
 #}
 {% from '_helpers.html' import render_field %}
 
-{# Processor check only applies in watch-edit context (llm_group_overrides present). #}
-{# In tag/group edit context the AI section is always visible.                        #}
-{% if llm_group_overrides is defined %}
-    {% set is_text_json_diff = not watch.get('processor') or watch.get('processor') == 'text_json_diff' %}
-{% else %}
-    {% set is_text_json_diff = true %}
-{% endif %}
+{# Determine which processor sections to render. The AI tab is no longer
+   gated to text_json_diff only — restock_diff watches see vision controls. #}
+{% set _processor = (watch.get('processor') if watch is defined and watch else 'text_json_diff') %}
+{% set _is_text_json_diff = _processor == 'text_json_diff' or _processor is none or _processor == '' %}
+{% set _is_restock_diff   = _processor == 'restock_diff' %}
+{% set _show_ai_section   = _is_text_json_diff or _is_restock_diff %}
 
-{% if is_text_json_diff %}
+{% if _show_ai_section %}
 
 {# ── Configured: show the intent + summary fields ────────────────── #}
 {% if llm_configured %}
 <div class="border-fieldset" id="llm-intent-section">
     <h3>&#x2728; {{ _('AI') }}</h3>
 
+    {% if _is_text_json_diff %}
     {# — AI Change Intent — #}
     <h4 style="margin: 0 0 0.3em 0;">{{ _('AI — Notify when…') }}</h4>
     <p class="pure-form-message-inline" style="margin-top:0">
@@ -105,6 +105,7 @@
         </ul>
     </div>
     {% endif %}
+    {% endif %}{# _is_text_json_diff #}
 </div>
 
 {# ── Not configured: greyed-out prompt to configure ──────────────── #}
@@ -123,4 +124,4 @@
 </div>
 {% endif %}
 
-{% endif %}{# is_text_json_diff #}
+{% endif %}{# _show_ai_section #}
