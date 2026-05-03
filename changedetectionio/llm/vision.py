@@ -240,3 +240,38 @@ def build_vision_messages(text_user_content: str,
         ],
     })
     return messages
+
+
+def probe_vision_capability(model: str,
+                            api_key: str | None,
+                            api_base: str | None,
+                            timeout: int = 30) -> tuple[bool, str]:
+    """Send PROBE_IMAGE_BYTES with a trivial 'describe what you see' prompt.
+    Return (ok, message_for_user). Used by /settings/llm/vision-test."""
+    import litellm
+    messages = build_vision_messages(
+        text_user_content='Describe what you see in 5 words or fewer.',
+        image_bytes=PROBE_IMAGE_BYTES, mime_type='image/png',
+    )
+    try:
+        kwargs = {
+            'model': model, 'messages': messages, 'timeout': timeout,
+            'temperature': 0, 'max_tokens': 100,
+        }
+        if api_key:
+            kwargs['api_key'] = api_key
+        if api_base:
+            kwargs['api_base'] = api_base
+        response = litellm.completion(**kwargs)
+        choice = response.choices[0]
+        text = (choice.message.content or '').strip()
+        finish = getattr(choice, 'finish_reason', None)
+        if not text:
+            return False, (
+                f"Model responded but returned empty content "
+                f"(finish_reason={finish}). The configured model may not "
+                f"support image inputs."
+            )
+        return True, text
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"

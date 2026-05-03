@@ -2,7 +2,7 @@
 import base64
 import io
 import random
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from PIL import Image
@@ -298,3 +298,47 @@ def test_build_vision_messages_previous_screenshot_unused_in_phase1():
     )
     image_parts = [p for p in msgs[0]['content'] if p['type'] == 'image_url']
     assert len(image_parts) == 1
+
+
+def test_probe_vision_capability_success():
+    """litellm returns text → (True, message)."""
+    fake_response = MagicMock()
+    fake_response.choices = [MagicMock()]
+    fake_response.choices[0].message.content = "I see a small grey square."
+    fake_response.choices[0].finish_reason = 'stop'
+
+    with patch('litellm.completion', return_value=fake_response):
+        ok, msg = vision.probe_vision_capability(
+            model='openai/qwen3-vl-32b', api_key='sk',
+            api_base='http://10.0.20.64:8011/v1',
+        )
+    assert ok is True
+    assert 'square' in msg.lower() or 'grey' in msg.lower()
+
+
+def test_probe_vision_capability_endpoint_rejects():
+    """litellm raises → (False, error message)."""
+    err = Exception("Model does not support image inputs")
+    with patch('litellm.completion', side_effect=err):
+        ok, msg = vision.probe_vision_capability(
+            model='openai/qwen3-32b-instruct', api_key='sk',
+            api_base='http://10.0.20.64:8011/v1',
+        )
+    assert ok is False
+    assert 'image' in msg.lower() or 'support' in msg.lower()
+
+
+def test_probe_vision_capability_empty_content():
+    """200 response but empty content → (False, helpful message)."""
+    fake_response = MagicMock()
+    fake_response.choices = [MagicMock()]
+    fake_response.choices[0].message.content = ''
+    fake_response.choices[0].finish_reason = 'length'
+
+    with patch('litellm.completion', return_value=fake_response):
+        ok, msg = vision.probe_vision_capability(
+            model='openai/qwen3-vl-32b', api_key='sk',
+            api_base='http://10.0.20.64:8011/v1',
+        )
+    assert ok is False
+    assert 'empty' in msg.lower() or 'finish_reason' in msg.lower()
