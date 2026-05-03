@@ -11,6 +11,7 @@ Image preprocessing rationale:
   LLaVA 336-672px) and sending oversized images either OOMs the local GPU or
   gets badly downsampled inside the model. We crop + resize before sending.
 """
+import base64
 import os
 
 # Preprocessing defaults — env-overridable for power users.
@@ -34,3 +35,9 @@ class VisionImageTooLargeError(Exception):
     """Image still exceeds size cap after all preprocessing reductions.
     Caller catches this and falls back to text-only path with a warning."""
     pass
+
+
+def encode_as_data_url(image_bytes: bytes, mime_type: str) -> str:
+    """Wrap raw image bytes in OpenAI multipart-format data URL.
+    Returns 'data:<mime>;base64,<b64-encoded-bytes>'."""
+    return f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
