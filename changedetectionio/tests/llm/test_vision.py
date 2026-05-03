@@ -1,8 +1,10 @@
 """Unit tests for changedetectionio.llm.vision."""
 import base64
 import io
+import random
 from unittest.mock import MagicMock
 
+import pytest
 from PIL import Image
 
 from changedetectionio.llm import vision
@@ -96,3 +98,31 @@ def test_preprocess_returns_used_hint_dict():
     assert 'quality' in used_hint
     assert 'max_width' in used_hint
     assert 'max_height' in used_hint
+
+
+def test_preprocess_oversize_quality_ladder_kicks_in():
+    """High-entropy image with tight cap → ladder descends past q=85."""
+    random.seed(42)
+    pixels = bytes(random.randint(0, 255) for _ in range(1280 * 4096 * 3))
+    img = Image.frombytes('RGB', (1280, 4096), pixels)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG', compress_level=0)
+    src = buf.getvalue()
+
+    out_bytes, _, used_hint = vision.preprocess_screenshot(src, max_kb=600)
+    assert len(out_bytes) <= 600 * 1024
+    # The ladder ran — quality reduced below the default 85
+    assert used_hint['quality'] <= 85
+
+
+def test_preprocess_unrescuable_raises():
+    """Cap so tight no quality + dim combination satisfies → raises."""
+    random.seed(7)
+    pixels = bytes(random.randint(0, 255) for _ in range(1280 * 4096 * 3))
+    img = Image.frombytes('RGB', (1280, 4096), pixels)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG', compress_level=0)
+    src = buf.getvalue()
+
+    with pytest.raises(vision.VisionImageTooLargeError):
+        vision.preprocess_screenshot(src, max_kb=5, max_width=1280)
