@@ -158,10 +158,15 @@
     </p>
     {% set _provider_kind = (llm_config.get('provider_kind') if llm_config else '') %}
     {% set _is_local_compatible = _provider_kind == 'openai_compatible' %}
+    {% set _is_browser_fetcher = (watch.get('fetch_backend') if watch is defined and watch else '') in ('html_webdriver', 'html_playwright', 'html_puppeteer') %}
     <div class="pure-control-group">
         {% if not _is_local_compatible %}
         <p class="pure-form-message-inline" style="opacity:0.7;">
-            {{ _('Vision is currently only enabled for the OpenAI-compatible (vLLM, LM Studio, llama.cpp) provider.') }}
+            {{ _('Vision is currently only enabled for the OpenAI-compatible (vLLM, LM Studio, llama.cpp) provider. Configure that in <a href="%(url)s">Settings → AI / LLM</a>.', url=url_for('settings.settings_page') + '#ai') | safe }}
+        </p>
+        {% elif not _is_browser_fetcher %}
+        <p class="pure-form-message-inline" style="opacity:0.7;">
+            {{ _('Vision needs a browser-based fetcher (Playwright / Puppeteer / WebDriver) to capture screenshots. Switch the fetcher in the <strong>Request</strong> tab to enable.') | safe }}
         </p>
         {% else %}
         {{ render_field(form.llm_use_vision) }}
