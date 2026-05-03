@@ -507,7 +507,7 @@ class perform_site_check(difference_detection_processor):
                 logger.debug(f"Calling extra plugins for getting item price/availability (fetcher: {fetcher_name})")
                 from changedetectionio.llm.evaluator import resolve_intent
                 _llm_intent, _ = resolve_intent(watch, self.datastore)
-                plugin_availability = get_itemprop_availability_from_plugin(self.fetcher.content, fetcher_name, self.fetcher, watch.link, llm_intent=_llm_intent or None)
+                plugin_availability = get_itemprop_availability_from_plugin(self.fetcher.content, fetcher_name, self.fetcher, watch.link, llm_intent=_llm_intent or None, watch=watch)
 
                 if plugin_availability:
                     # Extract and strip LLM token metadata before using as Restock data

@@ -187,14 +187,187 @@ def _strip_html(html_content: str) -> str:
     return text[:_MAX_CONTENT_CHARS]
 
 
+def run_llm_restock_extraction(watch, text_content, llm_intent=None):
+    """LLM fallback for restock price/stock extraction (per-watch path).
+
+    Two gates beyond the legacy global toggle:
+      1. Per-watch llm_use_for_restock override (TernaryNoneBoolean: None=inherit global,
+         True=force on, False=force off).
+      2. Vision sub-gate (llm_use_vision + llm_vision_verified + provider_kind=='openai_compatible').
+         Falls through to text-only on screenshot absence or completion failure;
+         tracks 3-strikes via vision.record_vision_failure.
+
+    Returns the parsed JSON dict (e.g. {'price': 10.0, 'currency': 'USD', 'availability': 'instock'})
+    or None on any failure path.
+
+    Token bookkeeping (global accumulate + per-watch counters) is handled internally,
+    matching the pattern in evaluator.summarise_change.
+    """
+    if datastore is None:
+        logger.debug("llm_restock: no datastore injected yet, skipping")
+        return None
+
+    from changedetectionio.llm.evaluator import (
+        get_llm_config, accumulate_global_tokens, apply_local_token_multiplier
+    )
+    from changedetectionio.llm import client as llm_client
+    from changedetectionio.llm import vision as _vision
+
+    # Gate 1: per-watch override (TernaryNoneBoolean: None means inherit)
+    per_watch = watch.get('llm_use_for_restock')
+    if per_watch is True:
+        effective = True
+    elif per_watch is False:
+        effective = False
+    else:
+        effective = bool(datastore.data['settings']['application']
+                         .get('llm_restock_use_fallback_extract', True))
+
+    if not effective:
+        logger.debug("llm_restock: skipped (per-watch llm_use_for_restock=False or global disabled)")
+        return None
+
+    llm_cfg = get_llm_config(datastore)
+    if not llm_cfg or not llm_cfg.get('model'):
+        return None
+
+    url = watch.get('url', '')
+    user_prompt = f'URL: {url or "unknown"}\n\nPage content:\n{text_content}'
+    if llm_intent:
+        user_prompt += f'\n\nUser notification intent: {llm_intent}'
+
+    # Gate 2: vision sub-gate
+    use_vision = (
+        watch.get('llm_use_vision')
+        and watch.get('llm_vision_verified')
+        and llm_cfg.get('provider_kind') == 'openai_compatible'
+    )
+
+    messages = None
+    if use_vision:
+        loaded = _vision.load_and_prepare_screenshot(watch, llm_cfg)
+        if loaded is not None:
+            image_bytes, mime = loaded
+            messages = _vision.build_vision_messages(
+                text_user_content=user_prompt,
+                image_bytes=image_bytes,
+                mime_type=mime,
+                system_prompt=SYSTEM_PROMPT,
+            )
+
+    if messages is None:
+        messages = [
+            {'role': 'system', 'content': SYSTEM_PROMPT},
+            {'role': 'user', 'content': user_prompt},
+        ]
+
+    _vision_was_used = any(isinstance(m.get('content'), list) for m in messages)
+
+    def _bookkeep_tokens(_tokens, _input_tokens, _output_tokens):
+        accumulate_global_tokens(
+            datastore, _tokens,
+            input_tokens=_input_tokens,
+            output_tokens=_output_tokens,
+            model=llm_cfg['model'],
+        )
+        if _tokens:
+            watch['llm_last_tokens_used'] = _tokens
+            watch['llm_tokens_used_cumulative'] = (watch.get('llm_tokens_used_cumulative') or 0) + _tokens
+
+    try:
+        raw, tokens, input_tokens, output_tokens = llm_client.completion(
+            model=llm_cfg['model'], messages=messages,
+            api_key=llm_cfg.get('api_key'), api_base=llm_cfg.get('api_base'),
+            max_tokens=apply_local_token_multiplier(80, llm_cfg),
+        )
+        _bookkeep_tokens(tokens, input_tokens, output_tokens)
+        if _vision_was_used:
+            _vision.reset_vision_failure_count(watch)
+    except Exception as e:
+        logger.warning(f"llm_restock: completion failed: {e}")
+        if _vision_was_used:
+            _vision.record_vision_failure(watch)
+            text_messages = [
+                {'role': 'system', 'content': SYSTEM_PROMPT},
+                {'role': 'user', 'content': user_prompt},
+            ]
+            try:
+                raw, tokens, input_tokens, output_tokens = llm_client.completion(
+                    model=llm_cfg['model'], messages=text_messages,
+                    api_key=llm_cfg.get('api_key'), api_base=llm_cfg.get('api_base'),
+                    max_tokens=apply_local_token_multiplier(80, llm_cfg),
+                )
+                _bookkeep_tokens(tokens, input_tokens, output_tokens)
+            except Exception as e2:
+                logger.warning(f"llm_restock: text-only retry also failed: {e2}")
+                return None
+        else:
+            return None
+
+    raw = raw.strip()
+    if raw.startswith('```'):
+        raw = re.sub(r'^```[a-z]*\n?', '', raw)
+        raw = raw.rstrip('`').strip()
+
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError as e:
+        logger.warning(f"llm_restock: JSON parse failed for raw={raw!r}: {e}")
+        return None
+
+    # Normalise price to float (preserve the legacy normalisation behavior)
+    price = result.get('price')
+    if price is not None:
+        try:
+            if isinstance(price, str):
+                price = float(re.sub(r'[^\d.]', '', price))
+            else:
+                price = float(price)
+            result['price'] = price
+        except (ValueError, TypeError):
+            logger.warning(f"llm_restock: could not convert price {price!r} to float, ignoring")
+            result['price'] = None
+
+    if result.get('price') is None and not result.get('availability'):
+        logger.info(f"llm_restock: LLM returned no usable price or availability for {url}")
+        return None
+
+    return result
+
+
 @hookimpl
-def get_itemprop_availability_override(content, fetcher_name, fetcher_instance, url, llm_intent=None):
-    """Use an LLM as a last-resort fallback for price and restock extraction."""
+def get_itemprop_availability_override(content, fetcher_name, fetcher_instance, url, llm_intent=None, watch=None):
+    """Use an LLM as a last-resort fallback for price and restock extraction.
+
+    When `watch` is provided, delegates to run_llm_restock_extraction (per-watch
+    gates including llm_use_for_restock and vision support).  When `watch` is None
+    (legacy callers, 3rd-party plugins testing the hook directly), uses the global
+    llm_restock_use_fallback_extract flag and the existing text-only flow.
+    """
     global datastore
 
     if datastore is None:
         logger.debug("LLM restock fallback: no datastore injected yet, skipping")
         return None
+
+    # New path: per-watch gates via run_llm_restock_extraction
+    if watch is not None:
+        text_content = _strip_html(content) if content else ''
+        if not text_content.strip():
+            logger.debug("LLM restock fallback: no text content after stripping HTML")
+            return None
+        result = run_llm_restock_extraction(watch, text_content, llm_intent=llm_intent)
+        if result is None:
+            return None
+        # processor.py expects {price, currency, availability}; tokens were tracked
+        # internally by run_llm_restock_extraction so no _tokens/_model keys.
+        return {
+            'price': result.get('price'),
+            'currency': result.get('currency') or None,
+            'availability': result.get('availability') or None,
+        }
+
+    # ---- Legacy path (watch is None) ---- existing body unchanged from here ----
 
     # Gate on the user setting (default True — enabled out of the box)
     app_settings = datastore.data.get('settings', {}).get('application', {})

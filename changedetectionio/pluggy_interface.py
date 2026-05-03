@@ -61,7 +61,7 @@ class ChangeDetectionSpec:
         pass
 
     @hookspec
-    def get_itemprop_availability_override(self, content, fetcher_name, fetcher_instance, url, llm_intent=None):
+    def get_itemprop_availability_override(self, content, fetcher_name, fetcher_instance, url, llm_intent=None, watch=None):
         """Provide custom implementation of get_itemprop_availability for a specific fetcher.
 
         This hook allows plugins to provide their own product availability detection
@@ -74,6 +74,10 @@ class ChangeDetectionSpec:
             fetcher_instance: The fetcher instance that generated the content
             url: The URL being watched/checked
             llm_intent: Optional user-supplied intent string (e.g. "alert when price drops below $300")
+            watch: Optional Watch dict; when provided, the impl can read per-watch settings
+                like llm_use_for_restock, llm_use_vision, llm_vision_verified.
+                Pluggy filters kwargs to what each impl declares, so 3rd-party plugins
+                that don't declare `watch` won't see it — backwards compatible.
 
         Returns:
             dict or None: Dictionary with availability data:
@@ -368,7 +372,7 @@ def collect_fetcher_status_icons(fetcher_name):
 
     return None
 
-def get_itemprop_availability_from_plugin(content, fetcher_name, fetcher_instance, url, llm_intent=None):
+def get_itemprop_availability_from_plugin(content, fetcher_name, fetcher_instance, url, llm_intent=None, watch=None):
     """Get itemprop availability data from plugins as a fallback.
 
     This is called when the built-in get_itemprop_availability doesn't find good data.
@@ -379,6 +383,9 @@ def get_itemprop_availability_from_plugin(content, fetcher_name, fetcher_instanc
         fetcher_instance: The fetcher instance that generated the content
         url: The URL being watched (watch.link - includes Jinja2 evaluation)
         llm_intent: Optional user-supplied intent string passed through to plugins
+        watch: Optional Watch dict; passed to plugin impls that declare it so they
+            can read per-watch settings like llm_use_for_restock and llm_use_vision.
+            Pluggy filters kwargs to what each impl declares — backwards compatible.
 
     Returns:
         dict or None: Availability data dictionary from first matching plugin, or None
@@ -390,6 +397,7 @@ def get_itemprop_availability_from_plugin(content, fetcher_name, fetcher_instanc
         fetcher_instance=fetcher_instance,
         url=url,
         llm_intent=llm_intent,
+        watch=watch,
     )
 
     # Return first non-None result with actual data
