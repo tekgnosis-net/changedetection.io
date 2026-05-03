@@ -1167,10 +1167,12 @@ msgid "models available with your key"
 msgstr ""
 
 #: changedetectionio/blueprint/settings/templates/settings_llm_tab.html
+#: changedetectionio/templates/edit/include_llm_intent.html
 msgid "Request failed"
 msgstr ""
 
 #: changedetectionio/blueprint/settings/templates/settings_llm_tab.html
+#: changedetectionio/templates/edit/include_llm_intent.html
 msgid "Testing…"
 msgstr ""
 
@@ -1179,6 +1181,7 @@ msgid "Connected"
 msgstr ""
 
 #: changedetectionio/blueprint/settings/templates/settings_llm_tab.html
+#: changedetectionio/templates/edit/include_llm_intent.html
 msgid "Failed"
 msgstr ""
 
@@ -2866,6 +2869,14 @@ msgid "AI Change Summary"
 msgstr ""
 
 #: changedetectionio/forms.py
+msgid "Send the page screenshot to the LLM"
+msgstr ""
+
+#: changedetectionio/forms.py
+msgid "Use AI for price/stock extraction (when JSON-LD/microdata is missing)"
+msgstr ""
+
+#: changedetectionio/forms.py
 msgid "CSS/JSONPath/JQ/XPath Filters"
 msgstr "Filtros CSS/JSONPath/JQ/XPath"
 
@@ -3963,6 +3974,54 @@ msgid "Describe the price change: old price, new price, percentage difference."
 msgstr ""
 
 #: changedetectionio/templates/edit/include_llm_intent.html
+msgid "AI Vision (optional)"
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+msgid ""
+"Send the latest page screenshot to the LLM alongside the text diff so the AI Change Summary can describe visual "
+"changes (icons, banners, layout shifts). Requires a self-hosted OpenAI-compatible endpoint with a vision-capable "
+"model and a browser-based fetcher."
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+#, python-format
+msgid ""
+"Vision is currently only enabled for the OpenAI-compatible (vLLM, LM Studio, llama.cpp) provider. Configure that in "
+"<a href=\"%(url)s\">Settings → AI / LLM</a>."
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+msgid ""
+"Vision needs a browser-based fetcher (Playwright / Puppeteer / WebDriver) to capture screenshots. Switch the fetcher "
+"in the <strong>Request</strong> tab to enable."
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+msgid "Test vision capability"
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+msgid "AI — Use the LLM for price/stock extraction"
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+msgid ""
+"When the page lacks structured product metadata (JSON-LD or microdata), the LLM can extract the price and stock state"
+" from page text. Override the global setting on a per-watch basis."
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+msgid "Vision (optional)"
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+msgid ""
+"When AI-for-restock is on, also send the page screenshot. If the model rejects the image or no screenshot is "
+"available, gracefully falls back to text-only LLM extraction."
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
 #, python-format
 msgid ""
 "Configure an AI / LLM provider in <a href=\"%(url)s\">Settings → AI / LLM</a> to enable AI Change Intent and AI "
@@ -3972,6 +4031,10 @@ msgstr ""
 #: changedetectionio/templates/edit/include_llm_intent.html
 #, python-format
 msgid "Configure an AI / LLM provider in <a href=\"%(url)s\">Settings → AI / LLM</a> to enable AI features for this group."
+msgstr ""
+
+#: changedetectionio/templates/edit/include_llm_intent.html
+msgid "Vision works"
 msgstr ""
 
 #: changedetectionio/templates/edit/include_subtract.html
